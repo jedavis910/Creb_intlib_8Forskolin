@@ -138,12 +138,10 @@ save_plot('plots/p_bc_rep_grid.png',
 
 #Average normalized expression between TR per BR and determine variant counts by summing----
 
-bc_dna_average <- function(df1, df2) {
+bc_dna_average <- function(df1) {
   average_tr <- df1 %>%
     mutate(average_norm = (normalized_1 + normalized_2)/2) %>%
     mutate(stdev_norm = ((normalized_1 - average_norm)^2)/2)
-  RNA_DNA <- inner_join
-  print('processed dfs in format (DNA, RNA) as (x, y)')
 }
 
 bc_ave_biol_rep_DNA_1 <- bc_dna_average(bc_join_biol_rep_DNA_1)
