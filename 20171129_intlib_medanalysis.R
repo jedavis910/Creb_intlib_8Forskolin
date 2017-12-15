@@ -101,8 +101,7 @@ ratio_bc_med_var <- function(df1) {
   med_ratio <- df1 %>%
     mutate(ratio = RNA_norm/ave_DNA_norm) %>%
     group_by(subpool, name, most_common) %>%
-    summarize(med_ratio = median(ratio)) %>%
-    mutate(med_ratio = log10(med_ratio))
+    summarize(med_ratio = median(ratio))
   bc_med <- inner_join(med_ratio, bc_count, 
                        by = c("name", "subpool", "most_common")
   )
@@ -117,8 +116,29 @@ med_ratio_2 <- ratio_bc_med_var(bc_ave_DNA_RNA_2)
 
 rep_1_2 <- inner_join(med_ratio_1, med_ratio_2,
              by = c("name", "subpool", "most_common"),
-             suffix = c('_br1', '_br2'))
+             suffix = c('_br1', '_br2')) 
 
+#determine the log(RNA/DNA) for each sample log2 is useful for replicate plots for expression 
+#and log10 is useful for barcode read analysis. This is useful for replicate plots, but 
+#further manipulations should use rep_1_2
+
+var_log2 <- function(df) {
+  log_ratio_df <- df %>% 
+    mutate_if(is.double, 
+              funs(log2(.))
+    )
+  return(log_ratio_df)
+}
+
+var_log10 <- function(df) {
+  log_ratio_df <- df %>% 
+    mutate_if(is.double, 
+              funs(log2(.))
+    )
+  return(log_ratio_df)
+}
+
+log2_rep_1_2 <- var_log2(rep_1_2)
 
 #Separate into subpools----------------------------------------------------------------------
 
@@ -128,7 +148,7 @@ rep_1_2 <- inner_join(med_ratio_1, med_ratio_2,
 #bp increments starting from closest to the minP. Separation lists the spacing between sites,
 #distance (start of consensus and flanks) and the background. Added 2 to all distances to 
 #measure to start of BS and not to flank. Added 4 to all spacing but 0 to measure difference 
-#between start of sites. Also took average of log10 med BC expression between biological 
+#between start of sites. Also took average of log2 med BC expression between biological 
 #replicates for plotting
 
 subpool3 <- 
@@ -148,16 +168,14 @@ subpool3 <-
                            background),
          background = str_sub(background, 1, 13)
          ) %>%
-  mutate(dist = dist + 2) %>%
+  mutate(dist = as.integer(dist + 2)) %>%
   mutate(spacing = 
            ifelse(spacing != as.integer(0), 
-                  spacing + 4, spacing)) %>%
-  mutate(ave_med_ratio = (med_ratio_br1 + med_ratio_br2)/2)
+                  as.integer(spacing + 4), as.integer(spacing))) 
 
 #Subpool 5 contains 6 equally spaced sites spaced 13 bp apart and starting from furthest to 
 #the minP. These sites are filled with sites of either the consensus site, a weak site or no 
-#site. Both the weak and consensus sites are flanked by the same flanking sequence. Also took
-#average of log10 med BC expression between biological replicates for plotting
+#site. Both the weak and consensus sites are flanked by the same flanking sequence. 
 
 subpool5 <- 
   filter(rep_1_2, subpool == "subpool5") %>%
@@ -198,33 +216,47 @@ subpool5 <-
                            'vista chr9', background),
          background = gsub('Vista Chr5:88673410-88674494', 'vista chr5',
                            background),
-         background = str_sub(background, 1, 13)) %>%
-  mutate(ave_med_ratio = (med_ratio_br1 + med_ratio_br2)/2)
+         background = str_sub(background, 1, 13))
+
+backgrounds <- subpool5 %>%
+  filter(total_sites == 0) %>%
+  select(background, med_ratio_br1, med_ratio_br2) %>%
+  rename(med_ratio_br1_back = med_ratio_br1) %>%
+  rename(med_ratio_br2_back = med_ratio_br2) 
 
 controls <- 
   filter(rep_1_2, subpool == "control") %>%
   ungroup ()
+
+#Normalize each reads within each subpool to background
+
+subpool3_norm <- left_join(subpool3, backgrounds, by = 'background') %>%
+  mutate(med_ratio_br1_norm = med_ratio_br1/med_ratio_br1_back) %>%
+  mutate(med_ratio_br2_norm = med_ratio_br2/med_ratio_br2_back) %>%
+  mutate(ave_med_ratio_norm = (med_ratio_br1_norm + med_ratio_br2_norm)/2)
+
+subpool3_log10_norm <- var_log10(subpool3_norm)
 
 
 #Plot subpool expression features-----------------------------------------------------------
 
 #Subpool 3
 
-p_subpool3_spa_back <- ggplot(subpool3) + 
-  geom_point(aes(dist, med_ratio_br1), alpha = 0.7, size = 1.5, color = '#287D8EFF') +
-  geom_point(aes(dist, med_ratio_br2), alpha = 0.7, size = 1.5, color = '#95D840FF') +
+p_subpool3_spa_back_norm <- ggplot(subpool3_log10_norm) + 
+  geom_point(aes(dist, med_ratio_br1_norm), alpha = 0.7, size = 1.5, color = '#287D8EFF') +
+  geom_point(aes(dist, med_ratio_br2_norm), alpha = 0.7, size = 1.5, color = '#95D840FF') +
   facet_grid(spacing ~ background) + 
-  geom_smooth(aes(dist, ave_med_ratio), 
+  geom_smooth(aes(dist, ave_med_ratio_norm), 
               span = 0.1, size = 0.7, color = '#481567FF', se = FALSE
               ) +
-  ylab('log10 median BC expression') + 
+  ylab('log10 average normalized median BC expression') + 
   panel_border() +
   background_grid(major = 'xy', minor = 'none') +
   scale_x_continuous(
     "Distance from First Site to Proximal Promoter End (bp)", 
     breaks = seq(from = 0, to = 150, by = 10))
 
-save_plot('plots/p_subpool3_spa_back.png', p_subpool3_spa_back, 
+save_plot('plots/p_subpool3_spa_back_norm.png', p_subpool3_spa_back_norm, 
           base_width = 46, base_height = 17, scale = 0.35)
 
 #Subpool 5
@@ -239,7 +271,7 @@ p_subpool5_cons_mix_weak_sitenum <- ggplot(NULL, aes(as.factor(total_sites),ave_
   background_grid(major = 'y') +
   panel_border() + 
   xlab("Total Number of Binding Sites") +
-  scale_y_continuous("log10 median BC expression")
+  scale_y_continuous("log2 median BC expression")
 
 p_subpool5_cons_mix_sitenum <- ggplot(NULL, aes(site_type, ave_med_ratio)) +
   facet_grid(background ~ total_sites) + 
@@ -251,7 +283,7 @@ p_subpool5_cons_mix_sitenum <- ggplot(NULL, aes(site_type, ave_med_ratio)) +
   background_grid(major = 'y') +
   panel_border() + 
   xlab("Binding site type") +
-  scale_y_continuous("log10 median BC expression") +
+  scale_y_continuous("log2 median BC expression") +
   annotation_logticks(sides = 'l')
 
 save_plot('plots/p_subpool5_cons_mix_sitenum.png', p_subpool5_cons_mix_sitenum, 
@@ -424,24 +456,26 @@ save_plot('plots/p_bc_rep_grid.png', p_bc_rep_grid, base_height = 7, base_width 
 #comparing subpool expression
 
 p_var_med_ratio <- ggplot(NULL, aes(med_ratio_br1, med_ratio_br2)) +
-  geom_point(data = filter(rep_1_2, subpool == 'subpool5'),
+  geom_point(data = filter(log2_rep_1_2, subpool == 'subpool5'),
              color = '#482677FF', alpha = 0.2) +
-  geom_point(data = filter(rep_1_2, subpool == 'subpool3'),
+  geom_point(data = filter(log2_rep_1_2, subpool == 'subpool3'),
              color = '#2D708EFF', alpha = 0.2) +
   geom_density2d(data = rep_1_2, alpha = 0.7, color = 'black', size = 0.2, bins = 10) +
-  geom_point(data = filter(rep_1_2, subpool == 'control'),
+  geom_point(data = filter(log2_rep_1_2, subpool == 'control'),
              color = '#3CBB75FF', alpha = 0.5) +
-  geom_point(data = filter(rep_1_2, 
+  geom_point(data = filter(log_2rep_1_2, 
                            grepl(
                              'subpool5_no_site_no_site_no_site_no_site_no_site_no_site',
                              name)), 
              color = '#B8DE29FF', alpha = 0.7) + 
   annotation_logticks(scaled = TRUE) +
-  xlab("log10 variant median\nnorm. RNA/DNA BR 1") +
-  ylab("log10 variant median\nnorm. RNA/DNA BR 2") +
-  scale_x_continuous(breaks = c(-2, -1, 0, 1), limits = c(-2.5, 1.5)) + 
-  scale_y_continuous(breaks = c(-2, -1, 0, 1), limits = c(-2.5, 1.5)) + 
-  annotate("text", x = -2, y = 1,
+  xlab("log2 variant median\nnorm. RNA/DNA BR 1") +
+  ylab("log2 variant median\nnorm. RNA/DNA BR 2") +
+  scale_x_continuous(breaks = c(-7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4), 
+                     limits = c(-7.5, 4)) + 
+  scale_y_continuous(breaks = c(-7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4), 
+                     limits = c(-7.5, 4)) + 
+  annotate("text", x = -5, y = 2,
            label = paste(
              'r =', round(
                cor(
@@ -457,19 +491,19 @@ save_plot('plots/p_var_med_ratio.png', p_var_med_ratio)
 #comparing BC number to med expression
 
 p_var_med_bc_1 <- ggplot(NULL, aes(barcodes_br1, med_ratio_br1)) +
-  geom_point(data = filter(rep_1_2, subpool == 'subpool5'),
+  geom_point(data = filter(log2_rep_1_2, subpool == 'subpool5'),
              color = '#482677FF', alpha = 0.3) +
-  geom_point(data = filter(rep_1_2, subpool == 'subpool3'),
+  geom_point(data = filter(log2_rep_1_2, subpool == 'subpool3'),
              color = '#2D708EFF', alpha = 0.3) +
-  geom_point(data = filter(rep_1_2, subpool == 'control'),
+  geom_point(data = filter(log2_rep_1_2, subpool == 'control'),
              color = '#3CBB75FF', alpha = 0.6) +
-  geom_point(data = filter(rep_1_2, 
+  geom_point(data = filter(log2_rep_1_2, 
                            grepl(
                              'subpool5_no_site_no_site_no_site_no_site_no_site_no_site',
                              name)), 
              color = '#B8DE29FF', alpha = 0.8) + 
   annotation_logticks(scaled = TRUE, sides = 'l') +
-  ylab("log10 variant median\nnorm. RNA/DNA") +
+  ylab("log2 variant median\nnorm. RNA/DNA") +
   scale_y_continuous(breaks = c(-2, -1, 0, 1), limits = c(-2.5, 1.5)) + 
   scale_x_continuous(breaks = c(0, 25, 50, 75, 100), limits = c(0, 100)) +
   xlab("Barcodes per variant") +
@@ -485,19 +519,19 @@ p_var_med_bc_1 <- ggplot(NULL, aes(barcodes_br1, med_ratio_br1)) +
   )
 
 p_var_med_bc_2 <- ggplot(NULL, aes(barcodes_br2, med_ratio_br2)) +
-  geom_point(data = filter(rep_1_2, subpool == 'subpool5'),
+  geom_point(data = filter(log2_rep_1_2, subpool == 'subpool5'),
              color = '#482677FF', alpha = 0.3) +
-  geom_point(data = filter(rep_1_2, subpool == 'subpool3'),
+  geom_point(data = filter(log2_rep_1_2, subpool == 'subpool3'),
              color = '#2D708EFF', alpha = 0.3) +
-  geom_point(data = filter(rep_1_2, subpool == 'control'),
+  geom_point(data = filter(log2_rep_1_2, subpool == 'control'),
              color = '#3CBB75FF', alpha = 0.6) +
-  geom_point(data = filter(rep_1_2, 
+  geom_point(data = filter(log2_rep_1_2, 
                            grepl(
                              'subpool5_no_site_no_site_no_site_no_site_no_site_no_site',
                              name)), 
              color = '#B8DE29FF', alpha = 0.8) + 
   annotation_logticks(scaled = TRUE, sides = 'l') +
-  ylab("log10 variant median\nnorm. RNA/DNA") +
+  ylab("log2 variant median\nnorm. RNA/DNA") +
   scale_y_continuous(breaks = c(-2, -1, 0, 1), limits = c(-2.5, 1.5)) + 
   scale_x_continuous(breaks = c(0, 25, 50, 75, 100), limits = c(0, 100)) +
   xlab("Barcodes per variant") +
@@ -518,5 +552,54 @@ p_var_med_bc <- plot_grid(p_var_med_bc_1, p_var_med_bc_2,
                            hjust = -3, vjust = 0.5, scale = 0.9)
 
 save_plot('plots/p_var_med_bc.png', p_var_med_bc, base_height = 4, base_width = 10)
+
+
+#Finding variants for extra analyses-------------------------------------------------------
+
+#Finding variants for Rishi
+
+p_var_med_ratio <- ggplot(NULL, aes(med_ratio_br1, med_ratio_br2)) +
+  geom_point(data = filter(log2_rep_1_2), alpha = 0.2) +
+  geom_point(data = filter(log2_rep_1_2, 
+                           name == 'subpool5_weak_consensus_consensus_consensus_consensus_consensus_Vista Chr5:88673410-88674494'),
+             fill = '#404788FF', color = 'black', stroke = 0.2, size = 3, shape = 21) +
+  geom_point(data = filter(log2_rep_1_2, 
+                           name == 'subpool5_consensus_weak_consensus_weak_consensus_consensus_Vista Chr5:88673410-88674494' | name == 'subpool5_consensus_weak_consensus_no_site_consensus_consensus_Vista Chr5:88673410-88674494'),
+             fill = '#1F968BFF', color = 'black', stroke = 0.2, size = 3, shape = 21) +
+  geom_point(data = filter(log2_rep_1_2, 
+                           name == 'pGL4.29 Promega 1-63 + 1-87'),
+             fill = '#95D840FF', color = 'black', stroke = 0.2, size = 3, shape = 21) +
+  annotation_logticks(scaled = TRUE) +
+  xlab("log2 variant median\nnorm. RNA/DNA BR 1") +
+  ylab("log2 variant median\nnorm. RNA/DNA BR 2") +
+  scale_x_continuous(breaks = c(-7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4), 
+                     limits = c(-7.5, 4)) + 
+  scale_y_continuous(breaks = c(-7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4), 
+                     limits = c(-7.5, 4)) + 
+  annotate("text", x = -5, y = 2,
+           label = paste(
+             'r =', round(
+               cor(
+                 rep_1_2$med_ratio_br1, rep_1_2$med_ratio_br2,
+                 use = "pairwise.complete.obs", method = "pearson"
+               ), 2
+             )
+           )
+  )
+
+high_br1 <- arrange(rep_1_2, desc(med_ratio_br1)) %>%
+  head(1) %>%
+  ungroup %>%
+  select(name, most_common, med_ratio_br1, med_ratio_br2)
+
+high_br2 <- arrange(rep_1_2, desc(med_ratio_br2)) %>%
+  head(1) %>%
+  ungroup %>%
+  select(name, most_common, med_ratio_br1, med_ratio_br2)
+
+high_br <- rbind(high_br1, high_br2) %>%
+  write.table(
+    "high_int_br.txt", 
+    sep = '\t', row.names = FALSE)
 
 
