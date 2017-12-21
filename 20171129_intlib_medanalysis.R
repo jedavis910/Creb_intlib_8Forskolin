@@ -78,9 +78,8 @@ ave_dna_join_rna_rep <- function(df1, df2, df3) {
                          suffix = c("_DNA_tr1", "_DNA_tr2")
                          ) %>%
     mutate(ave_DNA_norm = (norm_DNA_tr1 + norm_DNA_tr2)/2) %>%
-    mutate(cv_DNA = (sqrt(((norm_DNA_tr1 - ave_DNA_norm)^2)/(2-1)))/ave_DNA_norm) %>%
-    filter(cv_DNA <= 0.2)
-  filter_reads_RNA <- filter(df3, num_reads > 0)
+    mutate(cv_DNA = (sqrt(((norm_DNA_tr1 - ave_DNA_norm)^2)/(2-1)))/ave_DNA_norm)
+  filter_reads_RNA <- filter(df3, num_reads > 3)
   DNA_RNA_join <- inner_join(DNA_join, filter_reads_RNA,
                              by = c("barcode", "name", "subpool", "most_common")
                              ) %>%
@@ -100,7 +99,7 @@ ratio_bc_med_var <- function(df1) {
   bc_count <- df1 %>%
     group_by(subpool, name, most_common) %>%
     summarize(barcodes = n()) %>%
-    filter(barcodes > 1)
+    filter(barcodes > 2)
   med_ratio <- df1 %>%
     mutate(ratio = RNA_norm/ave_DNA_norm) %>%
     group_by(subpool, name, most_common) %>%
@@ -113,26 +112,6 @@ ratio_bc_med_var <- function(df1) {
 
 med_ratio_1 <- ratio_bc_med_var(bc_ave_DNA_RNA_1)
 med_ratio_2 <- ratio_bc_med_var(bc_ave_DNA_RNA_2)
-
-
-#standard error of bc expression vs. median per variant---------------------------------------
-
-med_ratio_1_sem <- left_join(bc_ave_DNA_RNA_1, med_ratio_1, 
-                             by = c('name', 'subpool', 'most_common')) %>%
-  filter(barcodes != 'is.na') %>%
-  mutate(ratio = RNA_norm/ave_DNA_norm) %>%
-  mutate(
-    ratio_SEMed = (
-      (sqrt(((ratio - med_ratio)^2)/(barcodes - 1)))/sqrt(barcodes)
-      )/med_ratio
-    ) %>%
-  arrange(med_ratio)
-
-p_med_ratio_1_sem <- ggplot(med_ratio_1_sem, aes(name, ratio_SEMed)) +
-  geom_dotplot(binaxis = 'y', stackdir = 'center', binwidth = 1)
-
-med_ratio_2_sem <- left_join(bc_ave_DNA_RNA_2, med_ratio_2, 
-                             by = c('name', 'subpool', 'most_common'))
 
 
 #combine biological replicates and set minimum BC's between replicates------------------------
@@ -161,7 +140,6 @@ var_log10 <- function(df) {
   return(log_ratio_df)
 }
 
-log2_rep_1_2 <- var_log2(rep_1_2)
 
 #Separate into subpools----------------------------------------------------------------------
 
@@ -249,36 +227,61 @@ backgrounds <- subpool5 %>%
 
 controls <- 
   filter(rep_1_2, subpool == "control") %>%
-  ungroup ()
+  ungroup()
 
 #Normalize each reads within each subpool to background
 
 subpool3_norm <- left_join(subpool3, backgrounds, by = 'background') %>%
   mutate(med_ratio_br1_norm = med_ratio_br1/med_ratio_br1_back) %>%
   mutate(med_ratio_br2_norm = med_ratio_br2/med_ratio_br2_back) %>%
-  mutate(ave_med_ratio_norm = (med_ratio_br1_norm + med_ratio_br2_norm)/2) %>%
-  mutate(cv_med_ratio_norm = (
-    sqrt(((med_ratio_br1_norm - ave_med_ratio_norm)^2)/(2-1)))/ave_med_ratio_norm) %>%
-  filter(cv_med_ratio_norm <= 0.5)
+  mutate(ave_med_ratio_norm = (med_ratio_br1_norm + med_ratio_br2_norm)/2)
 
 subpool3_log10_norm <- var_log10(subpool3_norm)
 
-sapply(subpool3_log10_norm, function(x) sum(is.na(x)))
+sum(is.nan(subpool3_log10_norm$med_ratio_br1))
 
 subpool5_norm <- left_join(subpool5, backgrounds, by = 'background') %>%
   mutate(med_ratio_br1_norm = med_ratio_br1/med_ratio_br1_back) %>%
   mutate(med_ratio_br2_norm = med_ratio_br2/med_ratio_br2_back) %>%
   mutate(ave_med_ratio_norm = (med_ratio_br1_norm + med_ratio_br2_norm)/2)
 
+subpool5_log10_norm <- var_log10(subpool5_norm)
+
+mutate(cv_med_ratio_norm = (
+  sqrt(((med_ratio_br1_norm - ave_med_ratio_norm)^2)/(2-1)))/ave_med_ratio_norm) %>%
+  filter(cv_med_ratio_norm <= 0.5)
+
 
 #Plot subpool expression features-----------------------------------------------------------
 
 #Subpool 3
 
-p_subpool3_spa_back_norm <- ggplot(subpool3_log10_norm, aes(x = dist)) + 
+p_subpool3_r_norm <- ggplot(subpool3_log10_norm, aes(med_ratio_br1_norm, med_ratio_br2_norm)) +
+  geom_point(alpha = 0.3) + 
+  annotation_logticks(scaled = TRUE) +
+  xlab("Log10 norm. median expression BR 1") +
+  ylab("Log10 norm. median expression BR 2") +
+  scale_x_continuous(breaks = c(-2, -1, 0, 1, 2, 3, 4, 5, 6, 7), limits = c(-2, 7.5)) + 
+  scale_y_continuous(breaks = c(-2, -1, 0, 1, 2, 3, 4, 5, 6, 7), limits = c(-2, 7.5)) + 
+  annotate("text", x = 1, y = 5,
+           label = paste(
+             'r =', round(
+               cor(
+                 subpool3_log10_norm$med_ratio_br1_norm,
+                 subpool3_log10_norm$med_ratio_br2_norm,
+                 use = "pairwise.complete.obs", method = "pearson"
+               ), 2
+             )
+           )
+  )
+
+p_subpool3_spa_back_norm <- ggplot(
+  filter(subpool3_log10_norm, spacing != 70), 
+  aes(x = dist)
+  ) + 
   geom_point(aes(y = med_ratio_br1_norm), alpha = 0.7, color = '#287D8EFF') +
   geom_point(aes(y = med_ratio_br2_norm), alpha = 0.7, color = '#95D840FF') +
-  geom_smooth(aes(y = ave_med_ratio_norm), color = '#482677FF', span = 0.14) +
+  geom_smooth(aes(y = ave_med_ratio_norm), color = '#482677FF', span = 0.13) +
   facet_grid(spacing ~ background) + 
   ylab('log10 average normalized median BC expression') + 
   panel_border() +
@@ -291,6 +294,27 @@ save_plot('plots/p_subpool3_spa_back_norm.png', p_subpool3_spa_back_norm,
           base_width = 46, base_height = 17, scale = 0.35)
 
 #Subpool 5
+
+p_subpool5_r_norm <- ggplot(subpool5_log10_norm, aes(med_ratio_br1_norm, med_ratio_br2_norm)) +
+  geom_point(alpha = 0.3) + 
+  annotation_logticks(scaled = TRUE) +
+  xlab("Log10 norm. median expression BR 1") +
+  ylab("Log10 norm. median expression BR 2") +
+  scale_x_continuous(breaks = c(-2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9), 
+                     limits = c(-2, 9)) + 
+  scale_y_continuous(breaks = c(-2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9), 
+                     limits = c(-2, 9)) + 
+  annotate("text", x = 0, y = 7,
+           label = paste(
+             'r =', round(
+               cor(
+                 subpool5_log10_norm$med_ratio_br1_norm,
+                 subpool5_log10_norm$med_ratio_br2_norm,
+                 use = "pairwise.complete.obs", method = "pearson"
+               ), 2
+             )
+           )
+  )
 
 p_subpool5_cons_mix_weak_sitenum <- ggplot(NULL, aes(as.factor(total_sites),ave_med_ratio)) + 
   facet_wrap(background ~ site_type) + 
@@ -486,6 +510,29 @@ save_plot('plots/p_bc_rep_grid.png', p_bc_rep_grid, base_height = 7, base_width 
 
 #comparing subpool expression
 
+log2_rep_1_2 <- var_log2(rep_1_2)
+
+controls_log2 <- var_log2(controls)
+
+p_controls_r <- ggplot(controls_log2, aes(med_ratio_br1, med_ratio_br2)) +
+  geom_point(alpha = 1) + 
+  annotation_logticks(scaled = TRUE) +
+  xlab("Log2 median expression BR 1") +
+  ylab("Log2 median expression BR 2") +
+  scale_x_continuous(breaks = c(-5, -4, -3, -2, -1, 0, 1, 2), limits = c(-5.5, 2)) + 
+  scale_y_continuous(breaks = c(-5, -4, -3, -2, -1, 0, 1, 2), limits = c(-5.5, 2)) + 
+  annotate("text", x = -3, y = 0,
+           label = paste(
+             'r =', round(
+               cor(
+                 controls_log2$med_ratio_br1,
+                 controls_log2$med_ratio_br2,
+                 use = "pairwise.complete.obs", method = "pearson"
+               ), 2
+             )
+           )
+  )
+
 p_var_med_ratio <- ggplot(NULL, aes(med_ratio_br1, med_ratio_br2)) +
   geom_point(data = filter(log2_rep_1_2, subpool == 'subpool5'),
              color = '#482677FF', alpha = 0.2) +
@@ -518,6 +565,25 @@ p_var_med_ratio <- ggplot(NULL, aes(med_ratio_br1, med_ratio_br2)) +
   )
 
 save_plot('plots/p_var_med_ratio.png', p_var_med_ratio)
+
+#standard error of bc expression vs. median per variant---------------------------------------
+
+med_ratio_1_sem <- left_join(bc_ave_DNA_RNA_1, med_ratio_1, 
+                             by = c('name', 'subpool', 'most_common')) %>%
+  filter(barcodes != 'is.na') %>%
+  mutate(ratio = RNA_norm/ave_DNA_norm) %>%
+  mutate(
+    ratio_SEMed = (
+      (sqrt(((ratio - med_ratio)^2)/(barcodes - 1)))/sqrt(barcodes)
+    )/med_ratio
+  ) %>%
+  arrange(med_ratio)
+
+p_med_ratio_1_sem <- ggplot(med_ratio_1_sem, aes(name, ratio_SEMed)) +
+  geom_dotplot(binaxis = 'y', stackdir = 'center', binwidth = 1)
+
+med_ratio_2_sem <- left_join(bc_ave_DNA_RNA_2, med_ratio_2, 
+                             by = c('name', 'subpool', 'most_common'))
 
 #comparing BC number to med expression
 
