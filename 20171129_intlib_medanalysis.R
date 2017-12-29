@@ -118,7 +118,32 @@ med_ratio_2 <- ratio_bc_med_var(bc_ave_DNA_RNA_2)
 
 rep_1_2 <- inner_join(med_ratio_1, med_ratio_2,
              by = c("name", "subpool", "most_common"),
-             suffix = c('_br1', '_br2')) 
+             suffix = c('_br1', '_br2'))
+
+back_norm <- function(df1) {
+  gsub_1_2 <- df1 %>%
+    ungroup () %>%
+    filter(subpool != 'control') %>%
+    mutate(
+      name = gsub('Smith R. Vista chr9:83712599-83712766', 'v chr9', name),
+      name = gsub('Vista Chr5:88673410-88674494', 'v chr5', name),
+      name = gsub('scramble pGL4.29 Promega 1-63 \\+ 1-87', 's pGl4', name)
+    ) %>%
+    mutate(background = name) %>%
+    mutate(background = str_sub(background, nchar(background)-5, nchar(background)))
+  backgrounds <- gsub_1_2 %>%
+    filter(startsWith(name, 'subpool5_no_site_no_site_no_site_no_site_no_site_no_site')) %>%
+    select(background, med_ratio_br1, med_ratio_br2) %>%
+    rename(med_ratio_br1_back = med_ratio_br1) %>%
+    rename(med_ratio_br2_back = med_ratio_br2) 
+  back_join_norm <- left_join(gsub_1_2, backgrounds, by = 'background') %>%
+    mutate(med_ratio_br1_norm = med_ratio_br1/med_ratio_br1_back) %>%
+    mutate(med_ratio_br2_norm = med_ratio_br2/med_ratio_br2_back) %>%
+    mutate(ave_med_ratio_norm = (med_ratio_br1_norm + med_ratio_br2_norm)/2)
+}
+
+int_back_norm_rep_1_2 <- back_norm(rep_1_2)
+
 
 #determine the log(RNA/DNA) for each sample log2 is useful for replicate plots for expression 
 #and log10 is useful for barcode read analysis. This is useful for replicate plots, but 
@@ -140,6 +165,7 @@ var_log10 <- function(df) {
   return(log_ratio_df)
 }
 
+int_back_norm_rep_1_2_log10 <- var_log10(int_back_norm_rep_1_2)
 
 #Separate into subpools----------------------------------------------------------------------
 
@@ -153,22 +179,16 @@ var_log10 <- function(df) {
 #replicates for plotting
 
 subpool3 <- 
-  filter(rep_1_2, subpool == "subpool3") %>%
+  filter(int_back_norm_rep_1_2_log10, subpool == "subpool3") %>%
   ungroup () %>%
   select(-subpool) %>%
   mutate(name = gsub('2BS ', '', name), 
          name = gsub(' bp spacing ', '_', name)) %>%
   separate(name, 
-           into = c("subpool", "spacing", "fluff2", "fluff3", "dist", "background"),
+           into = c("subpool", "spacing", "fluff2", "fluff3", "dist", "fluff4"),
            sep = "_", convert = TRUE
            ) %>%
-  select(-subpool, -fluff2, -fluff3) %>%
-  mutate(background = gsub('Smith R. Vista chr9:83712599-83712766',
-                           'vista chr9', background),
-         background = gsub('Vista Chr5:88673410-88674494', 'vista chr5',
-                           background),
-         background = str_sub(background, 1, 13)
-         ) %>%
+  select(-subpool, -fluff2, -fluff3, -fluff4) %>%
   mutate(dist = as.integer(dist + 2)) %>%
   mutate(spacing = 
            ifelse(spacing != as.integer(0), 
@@ -179,15 +199,15 @@ subpool3 <-
 #site. Both the weak and consensus sites are flanked by the same flanking sequence. 
 
 subpool5 <- 
-  filter(rep_1_2, subpool == "subpool5") %>%
+  filter(int_back_norm_rep_1_2_log10, subpool == "subpool5") %>%
   ungroup () %>%
   select(-subpool) %>%
   mutate(name = gsub('no_site', 'nosite', name)) %>%
   separate(name, into = c(
     "subpool", "site1", "site2", "site3", "site4", "site5", "site6", 
-    "background"), sep = "_"
+    "fluff"), sep = "_"
   ) %>%
-  select(-subpool) %>%
+  select(-subpool, -fluff) %>%
   mutate(consensus = str_detect(site1, "consensus") + 
            str_detect(site2, "consensus") + 
            str_detect(site3, "consensus") + 
@@ -212,51 +232,34 @@ subpool5 <-
                   'consensus', 'mixed')) %>%
   mutate(site_type = 
            ifelse(consensus == 0 & weak > 0, 
-                  'weak', site_combo)) %>%
-  mutate(background = gsub('Smith R. Vista chr9:83712599-83712766',
-                           'vista chr9', background),
-         background = gsub('Vista Chr5:88673410-88674494', 'vista chr5',
-                           background),
-         background = str_sub(background, 1, 13))
-
-backgrounds <- subpool5 %>%
-  filter(total_sites == 0) %>%
-  select(background, med_ratio_br1, med_ratio_br2) %>%
-  rename(med_ratio_br1_back = med_ratio_br1) %>%
-  rename(med_ratio_br2_back = med_ratio_br2) 
+                  'weak', site_combo))
 
 controls <- 
   filter(rep_1_2, subpool == "control") %>%
-  ungroup()
+  ungroup() %>%
+  mutate(ave_med_ratio = (med_ratio_br1 + med_ratio_br2)/2)
 
-#Normalize each reads within each subpool to background
 
-subpool3_norm <- left_join(subpool3, backgrounds, by = 'background') %>%
-  mutate(med_ratio_br1_norm = med_ratio_br1/med_ratio_br1_back) %>%
-  mutate(med_ratio_br2_norm = med_ratio_br2/med_ratio_br2_back) %>%
-  mutate(ave_med_ratio_norm = (med_ratio_br1_norm + med_ratio_br2_norm)/2)
+#Write table to compare expression to other analyses-----------------------------------------
 
-subpool3_log10_norm <- var_log10(subpool3_norm)
+output_int <- int_back_norm_rep_1_2 %>%
+  write.table(
+    "int_back_norm_rep_1_2.txt", 
+    sep = '\t', row.names = FALSE)
 
-sum(is.nan(subpool3_log10_norm$med_ratio_br1))
-
-subpool5_norm <- left_join(subpool5, backgrounds, by = 'background') %>%
-  mutate(med_ratio_br1_norm = med_ratio_br1/med_ratio_br1_back) %>%
-  mutate(med_ratio_br2_norm = med_ratio_br2/med_ratio_br2_back) %>%
-  mutate(ave_med_ratio_norm = (med_ratio_br1_norm + med_ratio_br2_norm)/2)
-
-subpool5_log10_norm <- var_log10(subpool5_norm)
-
-mutate(cv_med_ratio_norm = (
-  sqrt(((med_ratio_br1_norm - ave_med_ratio_norm)^2)/(2-1)))/ave_med_ratio_norm) %>%
-  filter(cv_med_ratio_norm <= 0.5)
+output_int_controls <- controls %>%
+  write.table(
+    'int_controls_rep_1_2.txt',
+    sep = '\t', row.names = FALSE
+  )
 
 
 #Plot subpool expression features-----------------------------------------------------------
 
 #Subpool 3
 
-p_subpool3_r_norm <- ggplot(subpool3_log10_norm, aes(med_ratio_br1_norm, med_ratio_br2_norm)) +
+p_subpool3_r_norm <- ggplot(
+  subpool3, aes(med_ratio_br1_norm, med_ratio_br2_norm)) +
   geom_point(alpha = 0.3) + 
   annotation_logticks(scaled = TRUE) +
   xlab("Log10 norm. median expression BR 1") +
@@ -276,7 +279,7 @@ p_subpool3_r_norm <- ggplot(subpool3_log10_norm, aes(med_ratio_br1_norm, med_rat
   )
 
 p_subpool3_spa_back_norm <- ggplot(
-  filter(subpool3_log10_norm, spacing != 70), 
+  filter(subpool3, spacing != 70), 
   aes(x = dist)
   ) + 
   geom_point(aes(y = med_ratio_br1_norm), alpha = 0.7, color = '#287D8EFF') +
@@ -295,7 +298,7 @@ save_plot('plots/p_subpool3_spa_back_norm.png', p_subpool3_spa_back_norm,
 
 #Subpool 5
 
-p_subpool5_r_norm <- ggplot(subpool5_log10_norm, aes(med_ratio_br1_norm, med_ratio_br2_norm)) +
+p_subpool5_r_norm <- ggplot(subpool5, aes(med_ratio_br1_norm, med_ratio_br2_norm)) +
   geom_point(alpha = 0.3) + 
   annotation_logticks(scaled = TRUE) +
   xlab("Log10 norm. median expression BR 1") +
@@ -316,7 +319,9 @@ p_subpool5_r_norm <- ggplot(subpool5_log10_norm, aes(med_ratio_br1_norm, med_rat
            )
   )
 
-p_subpool5_cons_mix_weak_sitenum <- ggplot(NULL, aes(as.factor(total_sites),ave_med_ratio)) + 
+p_subpool5_cons_mix_weak_sitenum <- ggplot(
+  NULL, aes(as.factor(total_sites), ave_med_ratio_norm)
+  ) + 
   facet_wrap(background ~ site_type) + 
   geom_boxplot(data = filter(subpool5, total_sites > 0 & total_sites < 6)) +
   geom_boxplot(data = filter(subpool5, site_type == 'mixed' & total_sites == 6)) +
@@ -326,9 +331,9 @@ p_subpool5_cons_mix_weak_sitenum <- ggplot(NULL, aes(as.factor(total_sites),ave_
   background_grid(major = 'y') +
   panel_border() + 
   xlab("Total Number of Binding Sites") +
-  scale_y_continuous("log2 median BC expression")
+  scale_y_continuous("log10 median BC expression")
 
-p_subpool5_cons_mix_sitenum <- ggplot(NULL, aes(site_type, ave_med_ratio)) +
+p_subpool5_cons_mix_sitenum <- ggplot(NULL, aes(site_type, ave_med_ratio_norm)) +
   facet_grid(background ~ total_sites) + 
   geom_boxplot(data = filter(subpool5, total_sites > 0 & total_sites < 6)) +
   geom_boxplot(data = filter(subpool5, site_type == 'mixed' & total_sites == 6)) +
@@ -338,7 +343,7 @@ p_subpool5_cons_mix_sitenum <- ggplot(NULL, aes(site_type, ave_med_ratio)) +
   background_grid(major = 'y') +
   panel_border() + 
   xlab("Binding site type") +
-  scale_y_continuous("log2 median BC expression") +
+  scale_y_continuous("log10 median BC expression") +
   annotation_logticks(sides = 'l')
 
 save_plot('plots/p_subpool5_cons_mix_sitenum.png', p_subpool5_cons_mix_sitenum, 
@@ -510,61 +515,64 @@ save_plot('plots/p_bc_rep_grid.png', p_bc_rep_grid, base_height = 7, base_width 
 
 #comparing subpool expression
 
-log2_rep_1_2 <- var_log2(rep_1_2)
-
-controls_log2 <- var_log2(controls)
-
-p_controls_r <- ggplot(controls_log2, aes(med_ratio_br1, med_ratio_br2)) +
-  geom_point(alpha = 1) + 
-  annotation_logticks(scaled = TRUE) +
-  xlab("Log2 median expression BR 1") +
-  ylab("Log2 median expression BR 2") +
-  scale_x_continuous(breaks = c(-5, -4, -3, -2, -1, 0, 1, 2), limits = c(-5.5, 2)) + 
-  scale_y_continuous(breaks = c(-5, -4, -3, -2, -1, 0, 1, 2), limits = c(-5.5, 2)) + 
-  annotate("text", x = -3, y = 0,
-           label = paste(
-             'r =', round(
-               cor(
-                 controls_log2$med_ratio_br1,
-                 controls_log2$med_ratio_br2,
-                 use = "pairwise.complete.obs", method = "pearson"
-               ), 2
-             )
-           )
-  )
-
-p_var_med_ratio <- ggplot(NULL, aes(med_ratio_br1, med_ratio_br2)) +
-  geom_point(data = filter(log2_rep_1_2, subpool == 'subpool5'),
-             color = '#482677FF', alpha = 0.2) +
-  geom_point(data = filter(log2_rep_1_2, subpool == 'subpool3'),
-             color = '#2D708EFF', alpha = 0.2) +
-  geom_density2d(data = log2_rep_1_2, alpha = 0.7, color = 'black', size = 0.2, bins = 10) +
-  geom_point(data = filter(log2_rep_1_2, subpool == 'control'),
-             color = '#3CBB75FF', alpha = 0.5) +
-  geom_point(data = filter(log2_rep_1_2, 
+p_var_med_ratio <- ggplot(NULL, aes(med_ratio_br1_norm, med_ratio_br2_norm)) +
+  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'subpool5'),
+             color = '#482677FF', alpha = 0.2
+             ) +
+  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'subpool3'),
+             color = '#2D708EFF', alpha = 0.2
+             ) +
+  geom_density2d(data = int_back_norm_rep_1_2_log10, 
+                 alpha = 0.7, color = 'black', size = 0.2, bins = 10
+                 ) +
+  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'control'),
+             color = '#3CBB75FF', alpha = 0.5
+             ) +
+  geom_point(data = filter(int_back_norm_rep_1_2_log10, 
                            grepl(
                              'subpool5_no_site_no_site_no_site_no_site_no_site_no_site',
                              name)), 
              color = '#B8DE29FF', alpha = 0.7) + 
   annotation_logticks(scaled = TRUE) +
-  xlab("log2 variant median\nnorm. RNA/DNA BR 1") +
-  ylab("log2 variant median\nnorm. RNA/DNA BR 2") +
-  scale_x_continuous(breaks = c(-7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4), 
-                     limits = c(-7.5, 4)) + 
-  scale_y_continuous(breaks = c(-7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4), 
-                     limits = c(-7.5, 4)) + 
-  annotate("text", x = -5, y = 2,
-           label = paste(
-             'r =', round(
-               cor(
-                 log2_rep_1_2$med_ratio_br1, log2_rep_1_2$med_ratio_br2,
+  xlab("log10 variant median\nnorm. RNA/DNA BR 1") +
+  ylab("log10 variant median\nnorm. RNA/DNA BR 2") +
+  scale_x_continuous(breaks = c(-2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8), 
+                     limits = c(-2, 8.5)) + 
+  scale_y_continuous(breaks = c(-2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8), 
+                     limits = c(-2, 8.5)) + 
+  annotate("text", x = 0, y = 7,
+           label = paste('r =', round(
+             cor(
+               int_back_norm_rep_1_2_log10$med_ratio_br1_norm, 
+               int_back_norm_rep_1_2_log10$med_ratio_br2_norm,
+                 use = "pairwise.complete.obs", method = "pearson"
+                 ), 2
+             )
+             )
+           ) +
+  annotate("text", x = 0, y = 6, color = '#2D708EFF',
+           label = paste('r =', round(
+             cor(
+               filter(int_back_norm_rep_1_2_log10, subpool == 'subpool3')$med_ratio_br1_norm, 
+                 filter(int_back_norm_rep_1_2_log10, subpool == 'subpool3')$med_ratio_br2_norm,
                  use = "pairwise.complete.obs", method = "pearson"
                ), 2
-             )
+           )
+           )
+  ) + 
+  annotate("text", x = 0, y = 5, color = '#482677FF',
+           label = paste('r =', round(
+             cor(
+               filter(int_back_norm_rep_1_2_log10, subpool == 'subpool5')$med_ratio_br1_norm, 
+                 filter(int_back_norm_rep_1_2_log10, subpool == 'subpool5')$med_ratio_br2_norm,
+                 use = "pairwise.complete.obs", method = "pearson"
+               ), 2
+           )
            )
   )
 
 save_plot('plots/p_var_med_ratio.png', p_var_med_ratio)
+
 
 #standard error of bc expression vs. median per variant---------------------------------------
 
@@ -601,8 +609,8 @@ p_var_med_bc_1 <- ggplot(NULL, aes(barcodes_br1, med_ratio_br1)) +
              color = '#B8DE29FF', alpha = 0.8) + 
   annotation_logticks(scaled = TRUE, sides = 'l') +
   ylab("log2 variant median\nnorm. RNA/DNA") +
-  scale_y_continuous(breaks = c(-2, -1, 0, 1), limits = c(-2.5, 1.5)) + 
-  scale_x_continuous(breaks = c(0, 25, 50, 75, 100), limits = c(0, 100)) +
+  scale_y_continuous(breaks = c(-6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4), limits = c(-6, 4)) + 
+  scale_x_continuous(breaks = c(0, 25, 50, 75), limits = c(0, 75)) +
   xlab("Barcodes per variant") +
   annotate("text", x = 25, y = -2,
            label = paste(
@@ -629,8 +637,8 @@ p_var_med_bc_2 <- ggplot(NULL, aes(barcodes_br2, med_ratio_br2)) +
              color = '#B8DE29FF', alpha = 0.8) + 
   annotation_logticks(scaled = TRUE, sides = 'l') +
   ylab("log2 variant median\nnorm. RNA/DNA") +
-  scale_y_continuous(breaks = c(-2, -1, 0, 1), limits = c(-2.5, 1.5)) + 
-  scale_x_continuous(breaks = c(0, 25, 50, 75, 100), limits = c(0, 100)) +
+  scale_y_continuous(breaks = c(-6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4), limits = c(-6, 4)) + 
+  scale_x_continuous(breaks = c(0, 25, 50, 75), limits = c(0, 75)) +
   xlab("Barcodes per variant") +
   annotate("text", x = 25, y = -2,
            label = paste(
@@ -698,5 +706,15 @@ high_br <- rbind(high_br1, high_br2) %>%
   write.table(
     "high_int_br.txt", 
     sep = '\t', row.names = FALSE)
+
+
+#Random code snippets------------------------------------------------------------------------
+
+sum(is.nan(subpool3_log10_norm$med_ratio_br1))
+
+mutate(cv_med_ratio_norm = (
+  sqrt(((med_ratio_br1_norm - ave_med_ratio_norm)^2)/(2-1)))/ave_med_ratio_norm) %>%
+  filter(cv_med_ratio_norm <= 0.5)
+
 
 
