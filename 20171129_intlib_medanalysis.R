@@ -52,8 +52,8 @@ bc_map_join_bc <- function(df1, df2) {
   keep_bc <- left_join(df1, df2, by = 'barcode') %>%
     mutate(num_reads = if_else(
       is.na(num_reads), 
-      as.integer(0), 
-      num_reads
+      as.integer(1), 
+      as.integer(num_reads + 1)
       )
     ) %>%
     mutate(norm = as.numeric((num_reads * 1000000) / (sum(num_reads))))
@@ -68,19 +68,18 @@ bc_join_RNA_1 <- bc_map_join_bc(SP3_SP5_map, bc_RNA_1)
 bc_join_RNA_2 <- bc_map_join_bc(SP3_SP5_map, bc_RNA_2)
 
 
-#Join DNA BC reads > 0 take average norm. reads and join RNA BC reads > 0 per BR--------------
+#Join DNA BC reads > 2 take average norm. reads and join RNA BC reads > 3 per BR--------------
 
 ave_dna_join_rna_rep <- function(df1, df2, df3) {
-  filter_reads_1 <- filter(df1, num_reads > 2)
-  filter_reads_2 <- filter(df2, num_reads > 2)
+  filter_reads_1 <- filter(df1, num_reads > 3)
+  filter_reads_2 <- filter(df2, num_reads > 3)
   DNA_join <- inner_join(filter_reads_1, filter_reads_2, 
                          by = c("barcode", "name", "subpool", "most_common"), 
                          suffix = c("_DNA_tr1", "_DNA_tr2")
                          ) %>%
     mutate(ave_DNA_norm = (norm_DNA_tr1 + norm_DNA_tr2)/2) %>%
     mutate(cv_DNA = (sqrt(((norm_DNA_tr1 - ave_DNA_norm)^2)/(2-1)))/ave_DNA_norm)
-  filter_reads_RNA <- filter(df3, num_reads > 3)
-  DNA_RNA_join <- inner_join(DNA_join, filter_reads_RNA,
+  DNA_RNA_join <- left_join(DNA_join, df3,
                              by = c("barcode", "name", "subpool", "most_common")
                              ) %>%
     rename(num_reads_RNA = num_reads) %>%
@@ -93,7 +92,10 @@ bc_ave_DNA_RNA_1 <- ave_dna_join_rna_rep(bc_join_DNA_1_1, bc_join_DNA_1_2, bc_jo
 bc_ave_DNA_RNA_2 <- ave_dna_join_rna_rep(bc_join_DNA_2_1, bc_join_DNA_2_2, bc_join_RNA_2)
 
 
-#Determine RNA/DNA per BC in each set, determine median RNA/DNA per variant------------------
+#Barcodes per variant and median RNA/DNA-----------------------------------------------------
+
+#Count barcodes per variant, set minimum of 3 BC's per variant, determine RNA/DNA per BC in 
+#each set, determine RNA/DNA for each BC and take median RNA/DNA per variant
 
 ratio_bc_med_var <- function(df1) {
   bc_count <- df1 %>%
@@ -114,7 +116,12 @@ med_ratio_1 <- ratio_bc_med_var(bc_ave_DNA_RNA_1)
 med_ratio_2 <- ratio_bc_med_var(bc_ave_DNA_RNA_2)
 
 
-#combine biological replicates and set minimum BC's between replicates------------------------
+#combine biological replicates, normalize to background---------------------------------------
+
+#After combining, rename backgrounds to simplified names, make background column (excluding 
+#controls), separate out background values in each dataset and left join to original dataset.
+#Normalize expression of each variant to its background in that biological replicate.
+#Determine average normalized expression across biological replicates.
 
 rep_1_2 <- inner_join(med_ratio_1, med_ratio_2,
              by = c("name", "subpool", "most_common"),
@@ -172,11 +179,10 @@ int_back_norm_rep_1_2_log10 <- var_log10(int_back_norm_rep_1_2)
 #Subpool 3 contains 2 consensus binding sites with flanks (ATTGACGTCAGC) that vary in 
 #distance from one another by 0 (no inner flanks), 5, 10, 15, 20 and 70 bp (all but 0 appear 
 #as -4 bp spacing). Each site distance combination is then moved along the backgrounds at 1 
-#bp increments starting from closest to the minP. Separation lists the spacing between sites,
-#distance (start of consensus and flanks) and the background. Added 2 to all distances to 
-#measure to start of BS and not to flank. Added 4 to all spacing but 0 to measure difference 
-#between start of sites. Also took average of log2 med BC expression between biological 
-#replicates for plotting
+#bp increments starting from closest to the minP. Separation lists the spacing between sites 
+#and distance (start of consensus and flanks). Added 2 to all distances to measure to start of
+#BS and not to flank. Added 4 to all spacing but 0 to measure difference between start of 
+#sites. Also took average of log2 med BC expression between biological replicates for plotting
 
 subpool3 <- 
   filter(int_back_norm_rep_1_2_log10, subpool == "subpool3") %>%
