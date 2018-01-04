@@ -101,7 +101,7 @@ ratio_bc_med_var <- function(df1) {
   bc_count <- df1 %>%
     group_by(subpool, name, most_common) %>%
     summarize(barcodes = n()) %>%
-    filter(barcodes > 2)
+    filter(barcodes > 7)
   med_ratio <- df1 %>%
     mutate(ratio = RNA_norm/ave_DNA_norm) %>%
     group_by(subpool, name, most_common) %>%
@@ -260,32 +260,75 @@ output_int_controls <- controls %>%
   )
 
 
+#plot variant statistics and rep plots-------------------------------------------------------
+
+#comparing subpool expression
+
+p_var_med_ratio <- ggplot(NULL, aes(med_ratio_br1_norm, med_ratio_br2_norm)) +
+  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'subpool5'),
+             color = '#482677FF', alpha = 0.2
+  ) +
+  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'subpool3'),
+             color = '#2D708EFF', alpha = 0.2
+  ) +
+  geom_density2d(data = int_back_norm_rep_1_2_log10, 
+                 alpha = 0.7, color = 'black', size = 0.2, bins = 10
+  ) +
+  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'control'),
+             color = '#3CBB75FF', alpha = 0.5
+  ) +
+  geom_point(data = filter(int_back_norm_rep_1_2_log10, 
+                           grepl(
+                             'subpool5_no_site_no_site_no_site_no_site_no_site_no_site',
+                             name)), 
+             color = '#B8DE29FF', alpha = 0.7) + 
+  annotation_logticks(scaled = TRUE) +
+  xlab("log10 variant median\nnorm. RNA/DNA BR 1") +
+  ylab("log10 variant median\nnorm. RNA/DNA BR 2") +
+  scale_x_continuous(breaks = c(-1, 0, 1, 2, 3, 4, 5, 6, 7, 8), 
+                     limits = c(-1.5, 8.5)) + 
+  scale_y_continuous(breaks = c(-1, 0, 1, 2, 3, 4, 5, 6, 7, 8), 
+                     limits = c(-1.5, 8.5)) +
+  annotate("text", x = 0, y = 7,
+           label = paste('r =', round(
+             cor(
+               int_back_norm_rep_1_2_log10$med_ratio_br1_norm, 
+               int_back_norm_rep_1_2_log10$med_ratio_br2_norm,
+               use = "pairwise.complete.obs", method = "pearson"
+             ), 2
+           )
+           )
+  ) +
+  annotate("text", x = 0, y = 6, color = '#2D708EFF',
+           label = paste('r =', round(
+             cor(
+               filter(int_back_norm_rep_1_2_log10, subpool == 'subpool3')$med_ratio_br1_norm, 
+               filter(int_back_norm_rep_1_2_log10, subpool == 'subpool3')$med_ratio_br2_norm,
+               use = "pairwise.complete.obs", method = "pearson"
+             ), 2
+           )
+           )
+  ) + 
+  annotate("text", x = 0, y = 5, color = '#482677FF',
+           label = paste('r =', round(
+             cor(
+               filter(int_back_norm_rep_1_2_log10, subpool == 'subpool5')$med_ratio_br1_norm, 
+               filter(int_back_norm_rep_1_2_log10, subpool == 'subpool5')$med_ratio_br2_norm,
+               use = "pairwise.complete.obs", method = "pearson"
+             ), 2
+           )
+           )
+  )
+
+save_plot('plots/p_var_med_ratio.png', p_var_med_ratio)
+
+
 #Plot subpool expression features-----------------------------------------------------------
 
 #Subpool 3
 
-p_subpool3_r_norm <- ggplot(
-  subpool3, aes(med_ratio_br1_norm, med_ratio_br2_norm)) +
-  geom_point(alpha = 0.3) + 
-  annotation_logticks(scaled = TRUE) +
-  xlab("Log10 norm. median expression BR 1") +
-  ylab("Log10 norm. median expression BR 2") +
-  scale_x_continuous(breaks = c(-2, -1, 0, 1, 2, 3, 4, 5, 6, 7), limits = c(-2, 7.5)) + 
-  scale_y_continuous(breaks = c(-2, -1, 0, 1, 2, 3, 4, 5, 6, 7), limits = c(-2, 7.5)) + 
-  annotate("text", x = 1, y = 5,
-           label = paste(
-             'r =', round(
-               cor(
-                 subpool3_log10_norm$med_ratio_br1_norm,
-                 subpool3_log10_norm$med_ratio_br2_norm,
-                 use = "pairwise.complete.obs", method = "pearson"
-               ), 2
-             )
-           )
-  )
-
 p_subpool3_spa_back_norm <- ggplot(
-  filter(subpool3, spacing != 70), 
+  filter(subpool3, background != 'v chr9'), 
   aes(x = dist)
   ) + 
   geom_point(aes(y = med_ratio_br1_norm), alpha = 0.7, color = '#287D8EFF') +
@@ -303,27 +346,6 @@ save_plot('plots/p_subpool3_spa_back_norm.png', p_subpool3_spa_back_norm,
           base_width = 46, base_height = 17, scale = 0.35)
 
 #Subpool 5
-
-p_subpool5_r_norm <- ggplot(subpool5, aes(med_ratio_br1_norm, med_ratio_br2_norm)) +
-  geom_point(alpha = 0.3) + 
-  annotation_logticks(scaled = TRUE) +
-  xlab("Log10 norm. median expression BR 1") +
-  ylab("Log10 norm. median expression BR 2") +
-  scale_x_continuous(breaks = c(-2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9), 
-                     limits = c(-2, 9)) + 
-  scale_y_continuous(breaks = c(-2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9), 
-                     limits = c(-2, 9)) + 
-  annotate("text", x = 0, y = 7,
-           label = paste(
-             'r =', round(
-               cor(
-                 subpool5_log10_norm$med_ratio_br1_norm,
-                 subpool5_log10_norm$med_ratio_br2_norm,
-                 use = "pairwise.complete.obs", method = "pearson"
-               ), 2
-             )
-           )
-  )
 
 p_subpool5_cons_mix_weak_sitenum <- ggplot(
   NULL, aes(as.factor(total_sites), ave_med_ratio_norm)
@@ -517,69 +539,6 @@ p_bc_rep_grid <- plot_grid(p_bc_rep_DNA1, p_bc_rep_DNA2, p_bc_rep_ave, p_bc_rep_
 save_plot('plots/p_bc_rep_grid.png', p_bc_rep_grid, base_height = 7, base_width = 10)
 
 
-#plot variant statistics and rep plots-------------------------------------------------------
-
-#comparing subpool expression
-
-p_var_med_ratio <- ggplot(NULL, aes(med_ratio_br1_norm, med_ratio_br2_norm)) +
-  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'subpool5'),
-             color = '#482677FF', alpha = 0.2
-             ) +
-  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'subpool3'),
-             color = '#2D708EFF', alpha = 0.2
-             ) +
-  geom_density2d(data = int_back_norm_rep_1_2_log10, 
-                 alpha = 0.7, color = 'black', size = 0.2, bins = 10
-                 ) +
-  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'control'),
-             color = '#3CBB75FF', alpha = 0.5
-             ) +
-  geom_point(data = filter(int_back_norm_rep_1_2_log10, 
-                           grepl(
-                             'subpool5_no_site_no_site_no_site_no_site_no_site_no_site',
-                             name)), 
-             color = '#B8DE29FF', alpha = 0.7) + 
-  annotation_logticks(scaled = TRUE) +
-  xlab("log10 variant median\nnorm. RNA/DNA BR 1") +
-  ylab("log10 variant median\nnorm. RNA/DNA BR 2") +
-  scale_x_continuous(breaks = c(-2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8), 
-                     limits = c(-2, 8.5)) + 
-  scale_y_continuous(breaks = c(-2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8), 
-                     limits = c(-2, 8.5)) + 
-  annotate("text", x = 0, y = 7,
-           label = paste('r =', round(
-             cor(
-               int_back_norm_rep_1_2_log10$med_ratio_br1_norm, 
-               int_back_norm_rep_1_2_log10$med_ratio_br2_norm,
-                 use = "pairwise.complete.obs", method = "pearson"
-                 ), 2
-             )
-             )
-           ) +
-  annotate("text", x = 0, y = 6, color = '#2D708EFF',
-           label = paste('r =', round(
-             cor(
-               filter(int_back_norm_rep_1_2_log10, subpool == 'subpool3')$med_ratio_br1_norm, 
-                 filter(int_back_norm_rep_1_2_log10, subpool == 'subpool3')$med_ratio_br2_norm,
-                 use = "pairwise.complete.obs", method = "pearson"
-               ), 2
-           )
-           )
-  ) + 
-  annotate("text", x = 0, y = 5, color = '#482677FF',
-           label = paste('r =', round(
-             cor(
-               filter(int_back_norm_rep_1_2_log10, subpool == 'subpool5')$med_ratio_br1_norm, 
-                 filter(int_back_norm_rep_1_2_log10, subpool == 'subpool5')$med_ratio_br2_norm,
-                 use = "pairwise.complete.obs", method = "pearson"
-               ), 2
-           )
-           )
-  )
-
-save_plot('plots/p_var_med_ratio.png', p_var_med_ratio)
-
-
 #standard error of bc expression vs. median per variant---------------------------------------
 
 med_ratio_1_sem <- left_join(bc_ave_DNA_RNA_1, med_ratio_1, 
@@ -601,56 +560,58 @@ med_ratio_2_sem <- left_join(bc_ave_DNA_RNA_2, med_ratio_2,
 
 #comparing BC number to med expression
 
-p_var_med_bc_1 <- ggplot(NULL, aes(barcodes_br1, med_ratio_br1)) +
-  geom_point(data = filter(log2_rep_1_2, subpool == 'subpool5'),
+p_var_med_bc_1 <- ggplot(NULL, aes(barcodes_br1, med_ratio_br1_norm)) +
+  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'subpool5'),
              color = '#482677FF', alpha = 0.3) +
-  geom_point(data = filter(log2_rep_1_2, subpool == 'subpool3'),
+  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'subpool3'),
              color = '#2D708EFF', alpha = 0.3) +
-  geom_point(data = filter(log2_rep_1_2, subpool == 'control'),
+  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'control'),
              color = '#3CBB75FF', alpha = 0.6) +
-  geom_point(data = filter(log2_rep_1_2, 
+  geom_point(data = filter(int_back_norm_rep_1_2_log10, 
                            grepl(
                              'subpool5_no_site_no_site_no_site_no_site_no_site_no_site',
                              name)), 
              color = '#B8DE29FF', alpha = 0.8) + 
   annotation_logticks(scaled = TRUE, sides = 'l') +
-  ylab("log2 variant median\nnorm. RNA/DNA") +
-  scale_y_continuous(breaks = c(-6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4), limits = c(-6, 4)) + 
-  scale_x_continuous(breaks = c(0, 25, 50, 75), limits = c(0, 75)) +
+  ylab("log10 variant median\nnorm. RNA/DNA") +
+  scale_y_continuous(breaks = c(-1, 0, 1, 2, 3, 4, 5, 6, 7, 8), limits = c(-1.5, 8.5)) +
+  scale_x_continuous(breaks = c(10, 20, 30, 40, 50, 60), limits = c(5, 65)) +
   xlab("Barcodes per variant") +
-  annotate("text", x = 25, y = -2,
+  annotate("text", x = 15, y = 8,
            label = paste(
              'r =', round(
                cor(
-                 rep_1_2$med_ratio_br1, rep_1_2$barcodes_br1,
+                 int_back_norm_rep_1_2_log10$barcodes_br1,
+                 int_back_norm_rep_1_2_log10$med_ratio_br1_norm,
                  use = "pairwise.complete.obs", method = "pearson"
                ), 2
              )
            )
   )
 
-p_var_med_bc_2 <- ggplot(NULL, aes(barcodes_br2, med_ratio_br2)) +
-  geom_point(data = filter(log2_rep_1_2, subpool == 'subpool5'),
+p_var_med_bc_2 <- ggplot(NULL, aes(barcodes_br2, med_ratio_br2_norm)) +
+  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'subpool5'),
              color = '#482677FF', alpha = 0.3) +
-  geom_point(data = filter(log2_rep_1_2, subpool == 'subpool3'),
+  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'subpool3'),
              color = '#2D708EFF', alpha = 0.3) +
-  geom_point(data = filter(log2_rep_1_2, subpool == 'control'),
+  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'control'),
              color = '#3CBB75FF', alpha = 0.6) +
-  geom_point(data = filter(log2_rep_1_2, 
+  geom_point(data = filter(int_back_norm_rep_1_2_log10, 
                            grepl(
                              'subpool5_no_site_no_site_no_site_no_site_no_site_no_site',
                              name)), 
              color = '#B8DE29FF', alpha = 0.8) + 
   annotation_logticks(scaled = TRUE, sides = 'l') +
-  ylab("log2 variant median\nnorm. RNA/DNA") +
-  scale_y_continuous(breaks = c(-6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4), limits = c(-6, 4)) + 
-  scale_x_continuous(breaks = c(0, 25, 50, 75), limits = c(0, 75)) +
+  ylab("log10 variant median\nnorm. RNA/DNA") +
+  scale_y_continuous(breaks = c(-1, 0, 1, 2, 3, 4, 5, 6, 7, 8), limits = c(-1.5, 8.5)) +
+  scale_x_continuous(breaks = c(10, 20, 30, 40, 50, 60), limits = c(5, 65)) +
   xlab("Barcodes per variant") +
-  annotate("text", x = 25, y = -2,
+  annotate("text", x = 15, y = 8,
            label = paste(
              'r =', round(
                cor(
-                 rep_1_2$med_ratio_br2, rep_1_2$barcodes_br2,
+                 int_back_norm_rep_1_2_log10$barcodes_br2,
+                 int_back_norm_rep_1_2_log10$med_ratio_br2_norm,
                  use = "pairwise.complete.obs", method = "pearson"
                ), 2
              )
