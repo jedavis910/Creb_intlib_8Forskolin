@@ -4,13 +4,13 @@ library(viridis)
 library(cowplot)
 library(ggExtra)
 
-#Written for the analysis of integrated library expression at 8 µM. 2 biological replicates
-#and 2 technical replicates each for DNA amplification
+#Written for the analysis of integrated library expression at 8 µM. 2 biological
+#replicates and 2 technical replicates each for DNA amplification
 #D##_BC: DNA biological replicate # technical replicate #
 #R#8_BC: RNA biological replicate # at 8 µM
 
 
-#Load index and bcmap files------------------------------------------------------------------
+#Load index and bcmap files-----------------------------------------------------
 
 bc_DNA_1_1 <- read_tsv('BCreads_txts/D11_BC.txt')
 bc_DNA_1_2 <- read_tsv('BCreads_txts/D12_BC.txt')
@@ -20,7 +20,8 @@ bc_RNA_1 <- read_tsv('BCreads_txts/R18_BC.txt')
 bc_RNA_2 <- read_tsv('BCreads_txts/R28_BC.txt')
 
 
-#Load barcode mapping table, remember sequences are rcomp due to sequencing format
+#Load barcode mapping table, remember sequences are rcomp due to sequencing 
+#format
 
 barcode_map <- read_tsv('../../BCMap/uniqueSP2345.txt', 
                         col_names = c(
@@ -36,27 +37,26 @@ SP3_SP5_map <- barcode_map %>%
   mutate(subpool = ifelse(
     startsWith(name, 'subpool'), 
     substr(name, 1, 8), 
-    'control'
-    )
-  ) %>%
+    'control')) %>%
   filter(subpool != 'subpool2') %>%
   filter(subpool != 'subpool4')
 
 
-#Join reads to bcmap------------------------------------------------------------------------
+#Join reads to bcmap------------------------------------------------------------
 
-#Join BC reads to BC mapping, keeping the reads only appearing in barcode mapping and 
-#replacing na with 0 reads.
+#Join BC reads to BC mapping, keeping the reads only appearing in barcode 
+#mapping andreplacing na with 0 reads.
 
 bc_map_join_bc <- function(df1, df2) {
-  keep_bc <- left_join(df1, df2, by = 'barcode') %>%
-    mutate(num_reads = if_else(
-      is.na(num_reads), 
-      as.integer(1), 
-      as.integer(num_reads + 1)
-      )
-    ) %>%
+  df2 <- df2 %>%
     mutate(norm = as.numeric((num_reads * 1000000) / (sum(num_reads))))
+  keep_bc <- left_join(df1, df2, by = 'barcode') %>%
+    mutate(norm = if_else(is.na(norm), 
+                                0, 
+                                norm)) %>%
+    mutate(num_reads = if_else(is.na(num_reads), 
+                               as.integer(0), 
+                               num_reads))
   return(keep_bc)
 }
 
@@ -68,23 +68,26 @@ bc_join_RNA_1 <- bc_map_join_bc(SP3_SP5_map, bc_RNA_1)
 bc_join_RNA_2 <- bc_map_join_bc(SP3_SP5_map, bc_RNA_2)
 
 
-#Join DNA BC reads > 2 take average norm. reads and join RNA BC reads > 3 per BR--------------
+#Join DNA and RNA BC------------------------------------------------------------
+
+#Join DNA BC reads > 2, take average norm. reads and join to RNA. Take ratio of 
+#RNA/DNA norm reads
 
 ave_dna_join_rna_rep <- function(df1, df2, df3) {
-  filter_reads_1 <- filter(df1, num_reads > 3)
-  filter_reads_2 <- filter(df2, num_reads > 3)
+  filter_reads_1 <- filter(df1, num_reads > 2)
+  filter_reads_2 <- filter(df2, num_reads > 2)
   DNA_join <- inner_join(filter_reads_1, filter_reads_2, 
                          by = c("barcode", "name", "subpool", "most_common"), 
-                         suffix = c("_DNA_tr1", "_DNA_tr2")
-                         ) %>%
-    mutate(ave_DNA_norm = (norm_DNA_tr1 + norm_DNA_tr2)/2) %>%
-    mutate(cv_DNA = (sqrt(((norm_DNA_tr1 - ave_DNA_norm)^2)/(2-1)))/ave_DNA_norm)
+                         suffix = c("_DNA_tr1", "_DNA_tr2")) %>%
+    mutate(ave_norm_DNA = (norm_DNA_tr1 + norm_DNA_tr2)/2)
   DNA_RNA_join <- left_join(DNA_join, df3,
-                             by = c("barcode", "name", "subpool", "most_common")
-                             ) %>%
+                             by = c("barcode", "name", "subpool", 
+                                    "most_common")) %>%
     rename(num_reads_RNA = num_reads) %>%
-    rename(RNA_norm = norm)
-  print('processed dfs in order of (DNA tr1, DNA tr2, RNA) in bc_dna_biol_rep(df1, df2, df3)')
+    rename(norm_RNA = norm) %>%
+    mutate(ratio = norm_RNA/ave_norm_DNA)
+  print('processed dfs in order of (DNA tr1, DNA tr2, RNA) in 
+        bc_dna_biol_rep(df1, df2, df3)')
   return(DNA_RNA_join)
 }
 
@@ -92,23 +95,41 @@ bc_ave_DNA_RNA_1 <- ave_dna_join_rna_rep(bc_join_DNA_1_1, bc_join_DNA_1_2, bc_jo
 bc_ave_DNA_RNA_2 <- ave_dna_join_rna_rep(bc_join_DNA_2_1, bc_join_DNA_2_2, bc_join_RNA_2)
 
 
-#Barcodes per variant and median RNA/DNA-----------------------------------------------------
+#Barcodes per variant and median RNA/DNA----------------------------------------
 
-#Count barcodes per variant, set minimum of 3 BC's per variant, determine RNA/DNA per BC in 
-#each set, determine RNA/DNA for each BC and take median RNA/DNA per variant
+#Count barcodes per variant per DNA and RNA, set minimum of 7 BC's per variant 
+#in DNA sample, take median RNA/DNA per variant, find absolute deviation for
+#each BC per variant then per variant determine the median absolute deviation.
 
 ratio_bc_med_var <- function(df1) {
-  bc_count <- df1 %>%
+  bc_count_DNA <- df1 %>%
     group_by(subpool, name, most_common) %>%
-    summarize(barcodes = n()) %>%
-    filter(barcodes > 7)
+    summarize(barcodes_DNA = n()) %>%
+    filter(barcodes_DNA > 7)
+  bc_count_RNA <- df1 %>%
+    group_by(subpool, name, most_common) %>%
+    filter(num_reads_RNA != 0) %>%
+    summarize(barcodes_RNA = n())
+  bc_DNA_RNA <- inner_join(bc_count_DNA, bc_count_RNA, 
+                           by = c('subpool', 'name', 'most_common'))
   med_ratio <- df1 %>%
-    mutate(ratio = RNA_norm/ave_DNA_norm) %>%
     group_by(subpool, name, most_common) %>%
     summarize(med_ratio = median(ratio))
-  bc_med <- inner_join(med_ratio, bc_count, 
-                       by = c("name", "subpool", "most_common")
-  )
+  mad_ratio <- inner_join(df1, med_ratio, 
+                          by = c('subpool', 'name', 'most_common')) %>%
+    mutate(absdev = abs(ratio - med_ratio)) %>%
+    group_by(subpool, name, most_common) %>%
+    summarize(mad = median(absdev))
+  med_mad <- inner_join(med_ratio, mad_ratio, 
+                        by = c('subpool', 'name', 'most_common')) %>%
+    mutate(mad_over_med = as.double(mad/med_ratio)) %>%
+    mutate(mad_over_med = if_else(
+      is.na(mad_over_med),
+      as.double(0), 
+      mad_over_med))
+  bc_med <- inner_join(med_mad, bc_DNA_RNA, 
+                       by = c('subpool', 'name', 'most_common')) %>%
+    ungroup()
   return(bc_med)
 }
 
@@ -118,10 +139,11 @@ med_ratio_2 <- ratio_bc_med_var(bc_ave_DNA_RNA_2)
 
 #combine biological replicates, normalize to background---------------------------------------
 
-#After combining, rename backgrounds to simplified names, make background column (excluding 
-#controls), separate out background values in each dataset and left join to original dataset.
-#Normalize expression of each variant to its background in that biological replicate.
-#Determine average normalized expression across biological replicates.
+#After combining, rename backgrounds to simplified names, make background column 
+#(excluding controls), separate out background values in each dataset and left 
+#join to original dataset. Normalize expression of each variant to its 
+#background in that biological replicate. Determine average normalized 
+#expression across biological replicates.
 
 rep_1_2 <- inner_join(med_ratio_1, med_ratio_2,
              by = c("name", "subpool", "most_common"),
@@ -167,7 +189,7 @@ var_log2 <- function(df) {
 var_log10 <- function(df) {
   log_ratio_df <- df %>% 
     mutate_if(is.double, 
-              funs(log2(.))
+              funs(log10(.))
     )
   return(log_ratio_df)
 }
@@ -264,61 +286,57 @@ output_int_controls <- controls %>%
 
 #comparing subpool expression
 
-p_var_med_ratio <- ggplot(NULL, aes(med_ratio_br1_norm, med_ratio_br2_norm)) +
-  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'subpool5'),
-             color = '#482677FF', alpha = 0.2
-  ) +
-  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'subpool3'),
-             color = '#2D708EFF', alpha = 0.2
-  ) +
-  geom_density2d(data = int_back_norm_rep_1_2_log10, 
-                 alpha = 0.7, color = 'black', size = 0.2, bins = 10
-  ) +
-  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'control'),
-             color = '#3CBB75FF', alpha = 0.5
-  ) +
-  geom_point(data = filter(int_back_norm_rep_1_2_log10, 
+rep_1_2_0corr <- function(df1) {
+  df1 <- df1 %>%
+    mutate(med_ratio_br1 = if_else(
+      med_ratio_br1 == as.double(0),
+      as.double(0.01), 
+      med_ratio_br1)) %>%
+    mutate(med_ratio_br2 = if_else(
+      med_ratio_br2 == as.double(0),
+      as.double(0.01), 
+      med_ratio_br2))
+}
+
+rep_1_2_log10 <- rep_1_2_0corr(rep_1_2) %>%
+  var_log10()
+
+p_var_med_ratio <- ggplot(NULL, aes(med_ratio_br1, med_ratio_br2)) +
+  geom_point(data = filter(rep_1_2_log10, subpool == 'subpool5'),
+             color = '#482677FF', alpha = 0.2) +
+  geom_point(data = filter(rep_1_2_log10, subpool == 'subpool3'),
+             color = '#2D708EFF', alpha = 0.2) +
+  geom_density2d(data = rep_1_2_log10, 
+                 alpha = 0.7, color = 'black', size = 0.2, bins = 10) +
+  geom_point(data = filter(rep_1_2_log10, 
                            grepl(
                              'subpool5_no_site_no_site_no_site_no_site_no_site_no_site',
                              name)), 
              color = '#B8DE29FF', alpha = 0.7) + 
+  background_grid(major = 'xy', minor = 'none') + 
   annotation_logticks(scaled = TRUE) +
-  xlab("log10 variant median\nnorm. RNA/DNA BR 1") +
-  ylab("log10 variant median\nnorm. RNA/DNA BR 2") +
-  scale_x_continuous(breaks = c(-1, 0, 1, 2, 3, 4, 5, 6, 7, 8), 
-                     limits = c(-1.5, 8.5)) + 
-  scale_y_continuous(breaks = c(-1, 0, 1, 2, 3, 4, 5, 6, 7, 8), 
-                     limits = c(-1.5, 8.5)) +
-  annotate("text", x = 0, y = 7,
+  xlab("log10 variant median\n RNA/DNA BR 1") +
+  ylab("log10 variant median\n RNA/DNA BR 2") +
+  scale_x_continuous(breaks = c(-3:1), limits = c(-3, 1.5)) + 
+  scale_y_continuous(breaks = c(-3:1), limits = c(-3, 1.5)) +
+  annotate("text", x = -2, y = 0.5,
+           label = paste('rtot =', 
+                         round(cor(rep_1_2_log10$med_ratio_br1, 
+                                   rep_1_2_log10$med_ratio_br2,
+                                   use = "pairwise.complete.obs", 
+                                   method = "pearson"), 2))) +
+  annotate("text", x = -2, y = 0, color = '#482677FF',
            label = paste('r =', round(
              cor(
-               int_back_norm_rep_1_2_log10$med_ratio_br1_norm, 
-               int_back_norm_rep_1_2_log10$med_ratio_br2_norm,
-               use = "pairwise.complete.obs", method = "pearson"
-             ), 2
-           )
-           )
-  ) +
-  annotate("text", x = 0, y = 6, color = '#2D708EFF',
-           label = paste('r =', round(
-             cor(
-               filter(int_back_norm_rep_1_2_log10, subpool == 'subpool3')$med_ratio_br1_norm, 
-               filter(int_back_norm_rep_1_2_log10, subpool == 'subpool3')$med_ratio_br2_norm,
-               use = "pairwise.complete.obs", method = "pearson"
-             ), 2
-           )
-           )
-  ) + 
-  annotate("text", x = 0, y = 5, color = '#482677FF',
-           label = paste('r =', round(
-             cor(
-               filter(int_back_norm_rep_1_2_log10, subpool == 'subpool5')$med_ratio_br1_norm, 
-               filter(int_back_norm_rep_1_2_log10, subpool == 'subpool5')$med_ratio_br2_norm,
-               use = "pairwise.complete.obs", method = "pearson"
-             ), 2
-           )
-           )
-  )
+               filter(rep_1_2_log10, subpool == 'subpool5')$med_ratio_br1, 
+               filter(rep_1_2_log10, subpool == 'subpool5')$med_ratio_br2,
+               use = "pairwise.complete.obs", method = "pearson"), 2))) +
+  annotate("text", x = -2, y = -0.5, color = '#2D708EFF',
+         label = paste('r =', round(
+           cor(
+             filter(rep_1_2_log10, subpool == 'subpool3')$med_ratio_br1, 
+             filter(rep_1_2_log10, subpool == 'subpool3')$med_ratio_br2,
+             use = "pairwise.complete.obs", method = "pearson"), 2)))
 
 save_plot('plots/p_var_med_ratio.png', p_var_med_ratio)
 
@@ -423,16 +441,29 @@ save_plot('plots/BC_num_reads_box_zoom.png',
 #BC normalized reads rep (need to log transform normalized reads first to compare, RNA and 
 #ave DNA comparison required merging BC's that are present in each br (DNA and RNA))
 
-bc_log_ave_DNA_RNA_1 <- bc_ave_DNA_RNA_1 %>%
-  mutate_if(is.double, funs(log10(.)))
+norm_DNA_RNA_0corr <- function(df1) {
+  df1 <- df1 %>%
+    mutate(norm_DNA_tr1 = if_else(
+      norm_DNA_tr1 == as.double(0),
+      as.double(0.01), 
+      norm_DNA_tr1)) %>%
+    mutate(norm_DNA_tr2 = if_else(
+      norm_DNA_tr2 == as.double(0),
+      as.double(0.01), 
+      norm_DNA_tr2)) %>%
+    mutate(norm_RNA = if_else(
+      norm_RNA == as.double(0),
+      as.double(0.01), 
+      norm_RNA))
+}
 
-bc_log_ave_DNA_RNA_2 <- bc_ave_DNA_RNA_2 %>%
-  mutate_if(is.double, funs(log10(.)))
-
+bc_log_ave_DNA_RNA_1 <- norm_DNA_RNA_0corr(bc_ave_DNA_RNA_1) %>%
+  var_log10()
+bc_log_ave_DNA_RNA_2 <- norm_DNA_RNA_0corr(bc_ave_DNA_RNA_2) %>%
+  var_log10()
 bc_log_ave_br <- inner_join(bc_log_ave_DNA_RNA_1, bc_log_ave_DNA_RNA_2, 
                             by = c("barcode", "name", "subpool", "most_common"),
-                            suffix = c('_br1', '_br2')
-                            )
+                            suffix = c('_br1', '_br2'))
 
 p_bc_rep_DNA1 <- ggplot(data = NULL, aes(norm_DNA_tr1, norm_DNA_tr2)) +
   geom_point(data = filter(bc_log_ave_DNA_RNA_1, subpool == 'subpool5'),
@@ -444,19 +475,15 @@ p_bc_rep_DNA1 <- ggplot(data = NULL, aes(norm_DNA_tr1, norm_DNA_tr2)) +
   annotation_logticks(scaled = TRUE) +
   xlab("Log10 norm. BC reads TR 1") +
   ylab("Log10 norm. BC reads TR 2") +
-  scale_x_continuous(breaks = c(-1, 0, 1, 2, 3, 4), limits = c(-1.5, 4)) + 
-  scale_y_continuous(breaks = c(-1, 0, 1, 2, 3, 4), limits = c(-1.5, 4)) + 
-  annotate("text", x = -1, y = 3,
+  background_grid(major = 'xy', minor = 'none') + 
+  scale_x_continuous(breaks = c(-2:3), limits = c(-2.5, 3.5)) + 
+  scale_y_continuous(breaks = c(-2:3), limits = c(-2.5, 3.5)) + 
+  annotate("text", x = -2, y = 3,
            label = paste(
              'r =', round(
-               cor(
-                 bc_log_ave_DNA_RNA_1$norm_DNA_tr1,
-                 bc_log_ave_DNA_RNA_1$norm_DNA_tr2,
-                 use = "pairwise.complete.obs", method = "pearson"
-               ), 2
-             )
-           )
-  )
+               cor(bc_log_ave_DNA_RNA_1$norm_DNA_tr1, 
+                   bc_log_ave_DNA_RNA_1$norm_DNA_tr2,
+                   use = "pairwise.complete.obs", method = "pearson"), 2)))
 
 p_bc_rep_DNA2 <- ggplot(data = NULL, aes(norm_DNA_tr1, norm_DNA_tr2)) +
   geom_point(data = filter(bc_log_ave_DNA_RNA_2, subpool == 'subpool5'),
@@ -468,22 +495,17 @@ p_bc_rep_DNA2 <- ggplot(data = NULL, aes(norm_DNA_tr1, norm_DNA_tr2)) +
   annotation_logticks(scaled = TRUE) +
   xlab("Log10 norm. BC reads TR 1") +
   ylab("Log10 norm. BC reads TR 2") +
-  scale_x_continuous(breaks = c(-1, 0, 1, 2, 3, 4), limits = c(-1.5, 4)) + 
-  scale_y_continuous(breaks = c(-1, 0, 1, 2, 3, 4), limits = c(-1.5, 4)) + 
-  annotate("text", x = -1, y = 3,
+  background_grid(major = 'xy', minor = 'none') + 
+  scale_x_continuous(breaks = c(-2:3), limits = c(-2.5, 3.5)) + 
+  scale_y_continuous(breaks = c(-2:3), limits = c(-2.5, 3.5)) + 
+  annotate("text", x = -2, y = 3,
            label = paste(
              'r =', round(
-               cor(
-                 bc_log_ave_DNA_RNA_2$norm_DNA_tr1,
-                 bc_log_ave_DNA_RNA_2$norm_DNA_tr2,
-                 use = "pairwise.complete.obs", method = "pearson"
-               ), 2
-             )
-           )
-  )
+               cor(bc_log_ave_DNA_RNA_2$norm_DNA_tr1, 
+                   bc_log_ave_DNA_RNA_2$norm_DNA_tr2,
+                   use = "pairwise.complete.obs", method = "pearson"), 2)))
 
-
-p_bc_rep_ave <- ggplot(data = NULL, aes(ave_DNA_norm_br1, ave_DNA_norm_br2)) +
+p_bc_rep_ave <- ggplot(data = NULL, aes(ave_norm_DNA_br1, ave_norm_DNA_br2)) +
   geom_point(data = filter(bc_log_ave_br, subpool == 'subpool5'),
              color = '#482677FF', alpha = 0.2) +
   geom_point(data = filter(bc_log_ave_br, subpool == 'subpool3'),
@@ -493,21 +515,16 @@ p_bc_rep_ave <- ggplot(data = NULL, aes(ave_DNA_norm_br1, ave_DNA_norm_br2)) +
   annotation_logticks(scaled = TRUE) +
   xlab("Ave log10 norm. BC reads BR 1") +
   ylab("Ave log10 norm. BC reads BR 2") +
-  scale_x_continuous(breaks = c(-1, 0, 1, 2, 3, 4), limits = c(-1.5, 4)) + 
-  scale_y_continuous(breaks = c(-1, 0, 1, 2, 3, 4), limits = c(-1.5, 4)) + 
-  annotate("text", x = -1, y = 3,
-           label = paste(
-             'r =', round(
-               cor(
-                 bc_log_ave_br$ave_DNA_norm_br1,
-                 bc_log_ave_br$ave_DNA_norm_br2,
-                 use = "pairwise.complete.obs", method = "pearson"
-               ), 2
-             )
-           )
-  )
+  background_grid(major = 'xy', minor = 'none') + 
+  scale_x_continuous(breaks = c(-2:3), limits = c(-2.5, 3.5)) + 
+  scale_y_continuous(breaks = c(-2:3), limits = c(-2.5, 3.5)) + 
+  annotate("text", x = -2, y = 3,
+           label = paste('r =', round(cor(bc_log_ave_br$ave_norm_DNA_br1,
+                                          bc_log_ave_br$ave_norm_DNA_br2,
+                                          use = "pairwise.complete.obs", 
+                                          method = "pearson"), 2)))
 
-p_bc_rep_RNA <- ggplot(data = NULL, aes(RNA_norm_br1, RNA_norm_br2)) +
+p_bc_rep_RNA <- ggplot(data = NULL, aes(norm_RNA_br1, norm_RNA_br2)) +
   geom_point(data = filter(bc_log_ave_br, subpool == 'subpool5'),
              color = '#482677FF', alpha = 0.2) +
   geom_point(data = filter(bc_log_ave_br, subpool == 'subpool3'),
@@ -517,26 +534,24 @@ p_bc_rep_RNA <- ggplot(data = NULL, aes(RNA_norm_br1, RNA_norm_br2)) +
   annotation_logticks(scaled = TRUE) +
   xlab("Log10 norm. BC reads BR 1") +
   ylab("Log10 norm. BC reads BR 2") +
-  scale_x_continuous(breaks = c(-1, 0, 1, 2, 3, 4), limits = c(-1.5, 4)) + 
-  scale_y_continuous(breaks = c(-1, 0, 1, 2, 3, 4), limits = c(-1.5, 4)) + 
-  annotate("text", x = -1, y = 3,
-           label = paste(
-             'r =', round(
-               cor(
-                 bc_log_ave_br$RNA_norm_br1,
-                 bc_log_ave_br$RNA_norm_br2,
-                 use = "pairwise.complete.obs", method = "pearson"
-               ), 2
-             )
-           )
-  )
+  background_grid(major = 'xy', minor = 'none') + 
+  scale_x_continuous(breaks = c(-2:3), limits = c(-2.5, 3.5)) + 
+  scale_y_continuous(breaks = c(-2:3), limits = c(-2.5, 3.5)) + 
+  annotate("text", x = -2, y = 3, 
+           label = paste('r =', round(cor(bc_log_ave_br$norm_RNA_br1,
+                                          bc_log_ave_br$norm_RNA_br2,
+                                          use = "pairwise.complete.obs", 
+                                          method = "pearson"), 2)))
 
-p_bc_rep_grid <- plot_grid(p_bc_rep_DNA1, p_bc_rep_DNA2, p_bc_rep_ave, p_bc_rep_RNA,
-                           labels = c('BR1 DNA', 'BR2 DNA', 'Ave DNA', '      RNA'),
+p_bc_rep_grid <- plot_grid(p_bc_rep_DNA1, p_bc_rep_DNA2, p_bc_rep_ave, 
+                           p_bc_rep_RNA,
+                           labels = c(
+                             'BR1 DNA', 'BR2 DNA', 'Ave DNA', '      RNA'),
                            nrow = 2, ncol = 2, align = 'hv', 
                            hjust = -2, vjust = 0.5, scale = 0.9)
 
-save_plot('plots/p_bc_rep_grid.png', p_bc_rep_grid, base_height = 7, base_width = 10)
+save_plot('plots/p_bc_rep_grid.png', p_bc_rep_grid, 
+          base_height = 7, base_width = 10)
 
 
 #standard error of bc expression vs. median per variant---------------------------------------
