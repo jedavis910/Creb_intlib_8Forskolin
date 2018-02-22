@@ -25,8 +25,7 @@ bc_RNA_2 <- read_tsv('BCreads_txts/R28_BC.txt')
 
 barcode_map <- read_tsv('../../BCMap/uniqueSP2345.txt', 
                         col_names = c(
-                          'fluff', 'barcode', 'name', 'most_common'
-                        ), 
+                          'fluff', 'barcode', 'name', 'most_common'), 
                         skip = 1) %>%
   select(-fluff)
 
@@ -91,8 +90,10 @@ ave_dna_join_rna_rep <- function(df1, df2, df3) {
   return(DNA_RNA_join)
 }
 
-bc_ave_DNA_RNA_1 <- ave_dna_join_rna_rep(bc_join_DNA_1_1, bc_join_DNA_1_2, bc_join_RNA_1)
-bc_ave_DNA_RNA_2 <- ave_dna_join_rna_rep(bc_join_DNA_2_1, bc_join_DNA_2_2, bc_join_RNA_2)
+bc_ave_DNA_RNA_1 <- ave_dna_join_rna_rep(bc_join_DNA_1_1, bc_join_DNA_1_2, 
+                                         bc_join_RNA_1)
+bc_ave_DNA_RNA_2 <- ave_dna_join_rna_rep(bc_join_DNA_2_1, bc_join_DNA_2_2, 
+                                         bc_join_RNA_2)
 
 
 #Barcodes per variant and median RNA/DNA----------------------------------------
@@ -298,8 +299,17 @@ rep_1_2_0corr <- function(df1) {
       med_ratio_br2))
 }
 
-rep_1_2_log10 <- rep_1_2_0corr(rep_1_2) %>%
+rep_1_2_0rm <- function(df1) {
+  df1 <- df1 %>%
+    filter(med_ratio_br1 != as.double(0)) %>%
+    filter(med_ratio_br2 != as.double(0))
+}
+
+rep_1_2_log10 <- rep_1_2_0rm(rep_1_2) %>%
   var_log10()
+
+test <- rep_1_2_0rm(rep_1_2) %>%
+  filter(mad_over_med_br1 == 1 | mad_over_med_br2 == 1)
 
 p_var_med_ratio <- ggplot(NULL, aes(med_ratio_br1, med_ratio_br2)) +
   geom_point(data = filter(rep_1_2_log10, subpool == 'subpool5'),
@@ -313,12 +323,12 @@ p_var_med_ratio <- ggplot(NULL, aes(med_ratio_br1, med_ratio_br2)) +
                              'subpool5_no_site_no_site_no_site_no_site_no_site_no_site',
                              name)), 
              color = '#B8DE29FF', alpha = 0.7) + 
-  background_grid(major = 'xy', minor = 'none') + 
   annotation_logticks(scaled = TRUE) +
   xlab("log10 variant median\n RNA/DNA BR 1") +
   ylab("log10 variant median\n RNA/DNA BR 2") +
   scale_x_continuous(breaks = c(-3:1), limits = c(-3, 1.5)) + 
-  scale_y_continuous(breaks = c(-3:1), limits = c(-3, 1.5)) +
+  scale_y_continuous(breaks = c(-3:1), limits = c(-3, 1.5))  +
+  background_grid(major = 'xy', minor = 'none') + 
   annotate("text", x = -2, y = 0.5,
            label = paste('rtot =', 
                          round(cor(rep_1_2_log10$med_ratio_br1, 
@@ -339,6 +349,31 @@ p_var_med_ratio <- ggplot(NULL, aes(med_ratio_br1, med_ratio_br2)) +
              use = "pairwise.complete.obs", method = "pearson"), 2)))
 
 save_plot('plots/p_var_med_ratio.png', p_var_med_ratio)
+
+p_var_med_ratio_madmed1 <- ggplot(NULL, aes(med_ratio_br1, med_ratio_br2)) +
+  geom_point(data = filter(rep_1_2_log10, 
+                           mad_over_med_br1 != as.double(0) & subpool != 'control'),
+             color = 'black', alpha = 0.2) + 
+  geom_point(data = filter(rep_1_2_log10, 
+                           mad_over_med_br2 != as.double(0) & subpool != 'control'),
+             color = 'black', alpha = 0.2) + 
+  geom_point(data = filter(rep_1_2_log10, 
+                         mad_over_med_br1 == as.double(0) & subpool != 'control'),
+           color = 'red', alpha = 0.2) + 
+  geom_point(data = filter(rep_1_2_log10, 
+                           mad_over_med_br2 == as.double(0) & subpool != 'control'),
+             color = 'red', alpha = 0.2) + 
+  annotation_logticks(scaled = TRUE) +
+  xlab("log10 variant median\n RNA/DNA BR 1") +
+  ylab("log10 variant median\n RNA/DNA BR 2") +
+  scale_x_continuous(breaks = c(-3:1), limits = c(-3, 1.5)) + 
+  scale_y_continuous(breaks = c(-3:1), limits = c(-3, 1.5)) +
+  annotate("text", x = -2, y = 0.5,
+           label = paste('rtot =', 
+                         round(cor(rep_1_2_log10$med_ratio_br1, 
+                                   rep_1_2_log10$med_ratio_br2,
+                                   use = "pairwise.complete.obs", 
+                                   method = "pearson"), 2)))
 
 
 #Plot subpool expression features-----------------------------------------------------------
@@ -554,94 +589,209 @@ save_plot('plots/p_bc_rep_grid.png', p_bc_rep_grid,
           base_height = 7, base_width = 10)
 
 
-#standard error of bc expression vs. median per variant---------------------------------------
+#Sum analysis-------------------------------------------------------------------
 
-med_ratio_1_sem <- left_join(bc_ave_DNA_RNA_1, med_ratio_1, 
-                             by = c('name', 'subpool', 'most_common')) %>%
-  filter(barcodes != 'is.na') %>%
-  mutate(ratio = RNA_norm/ave_DNA_norm) %>%
-  mutate(
-    ratio_SEMed = (
-      (sqrt(((ratio - med_ratio)^2)/(barcodes - 1)))/sqrt(barcodes)
-    )/med_ratio
-  ) %>%
-  arrange(med_ratio)
+var_sum_bc_num <- function(df1) {
+  bc_count <- df1 %>%
+    filter(df1$num_reads > 0) %>%
+    group_by(subpool, name, most_common) %>%
+    summarise(barcodes = n())
+  variant_sum <- df1 %>%
+    group_by(subpool, name, most_common) %>%
+    count(name, wt = norm) %>%
+    rename(sum = n)
+  bc_sum <- inner_join(variant_sum, bc_count, 
+                       by = c("name", "subpool", "most_common")) %>%
+    ungroup()
+  return(bc_sum)
+}
 
-p_med_ratio_1_sem <- ggplot(med_ratio_1_sem, aes(name, ratio_SEMed)) +
-  geom_dotplot(binaxis = 'y', stackdir = 'center', binwidth = 1)
+variant_counts_DNA_1_1 <- var_sum_bc_num(bc_join_DNA_1_1)
+variant_counts_DNA_1_2 <- var_sum_bc_num(bc_join_DNA_1_2)
+variant_counts_DNA_2_1 <- var_sum_bc_num(bc_join_DNA_2_1)
+variant_counts_DNA_2_2 <- var_sum_bc_num(bc_join_DNA_2_2)
+variant_counts_RNA_1 <- var_sum_bc_num(bc_join_RNA_1)
+variant_counts_RNA_2 <- var_sum_bc_num(bc_join_RNA_2)
 
-med_ratio_2_sem <- left_join(bc_ave_DNA_RNA_2, med_ratio_2, 
-                             by = c('name', 'subpool', 'most_common'))
 
-#comparing BC number to med expression
+ave_dna_join_rna_var <- function(df1, df2, df3) {
+  DNA_join <- inner_join(df1, df2, 
+                         by = c("name", "subpool", "most_common"), 
+                         suffix = c("_DNA_tr1", "_DNA_tr2")) %>%
+    mutate(ave_sum_DNA = (sum_DNA_tr1 + sum_DNA_tr2)/2) %>%
+    filter(barcodes_DNA_tr1 > 7) %>%
+    filter(barcodes_DNA_tr2 > 7)
+  DNA_RNA_join <- left_join(DNA_join, df3,
+                            by = c("name", "subpool", "most_common")) %>%
+    rename(sum_RNA = sum) %>%
+    rename(barcodes_RNA = barcodes) %>%
+    mutate(ratio = sum_RNA/ave_sum_DNA) %>%
+    mutate(sum_RNA = if_else(is.na(sum_RNA),
+                             0,
+                             sum_RNA)) %>%
+    mutate(ratio = if_else(is.na(ratio), 
+                          0, 
+                          ratio)) %>%
+    mutate(barcodes_RNA = if_else(is.na(barcodes_RNA),
+                                  as.integer(0),
+                                  barcodes_RNA))
+  print('processed dfs in order of (DNA tr1, DNA tr2, RNA) in 
+        ave_dna_join_rna_var(df1, df2, df3)')
+  return(DNA_RNA_join)
+}
 
-p_var_med_bc_1 <- ggplot(NULL, aes(barcodes_br1, med_ratio_br1_norm)) +
-  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'subpool5'),
-             color = '#482677FF', alpha = 0.3) +
-  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'subpool3'),
-             color = '#2D708EFF', alpha = 0.3) +
-  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'control'),
-             color = '#3CBB75FF', alpha = 0.6) +
-  geom_point(data = filter(int_back_norm_rep_1_2_log10, 
+RNA_DNA_br1 <- ave_dna_join_rna_var(variant_counts_DNA_1_1, 
+                                    variant_counts_DNA_1_2, 
+                                    variant_counts_RNA_1)
+RNA_DNA_br2 <- ave_dna_join_rna_var(variant_counts_DNA_2_1, 
+                                    variant_counts_DNA_2_2, 
+                                    variant_counts_RNA_2)
+
+rep_1_2_sum <- inner_join(RNA_DNA_br1, RNA_DNA_br2, 
+                          by = c('name', 'subpool', 'most_common'),
+                          suffix = c('_br1', '_br2'))
+
+rep_1_2_sum_0corr <- function(df1) {
+  df1 <- df1 %>%
+    mutate(ratio_br1 = if_else(
+      ratio_br1 == as.double(0),
+      as.double(0.01), 
+      ratio_br1)) %>%
+    mutate(ratio_br2 = if_else(
+      ratio_br2 == as.double(0),
+      as.double(0.01), 
+      ratio_br2))
+}
+
+rep_1_2_sum_0rm <- function(df1) {
+  df1 <- df1 %>%
+    filter(ratio_br1 != as.double(0)) %>%
+    filter(ratio_br2 != as.double(0))
+}
+
+rep_1_2_sum_log10 <- rep_1_2_sum_0rm(rep_1_2_sum) %>%
+  var_log10()
+
+p_var_sum_ratio <- ggplot(NULL, aes(ratio_br1, ratio_br2)) +
+  geom_point(data = filter(rep_1_2_sum_log10, subpool == 'subpool5'),
+             color = '#482677FF', alpha = 0.2) +
+  geom_point(data = filter(rep_1_2_sum_log10, subpool == 'subpool3'),
+             color = '#2D708EFF', alpha = 0.2) +
+  geom_density2d(data = rep_1_2_sum_log10, 
+                 alpha = 0.7, color = 'black', size = 0.2, bins = 10) +
+  geom_point(data = filter(rep_1_2_sum_log10, 
                            grepl(
                              'subpool5_no_site_no_site_no_site_no_site_no_site_no_site',
                              name)), 
-             color = '#B8DE29FF', alpha = 0.8) + 
-  annotation_logticks(scaled = TRUE, sides = 'l') +
-  ylab("log10 variant median\nnorm. RNA/DNA") +
-  scale_y_continuous(breaks = c(-1, 0, 1, 2, 3, 4, 5, 6, 7, 8), limits = c(-1.5, 8.5)) +
-  scale_x_continuous(breaks = c(10, 20, 30, 40, 50, 60), limits = c(5, 65)) +
-  xlab("Barcodes per variant") +
-  annotate("text", x = 15, y = 8,
-           label = paste(
-             'r =', round(
-               cor(
-                 int_back_norm_rep_1_2_log10$barcodes_br1,
-                 int_back_norm_rep_1_2_log10$med_ratio_br1_norm,
-                 use = "pairwise.complete.obs", method = "pearson"
-               ), 2
-             )
-           )
-  )
+             color = '#B8DE29FF', alpha = 0.7) + 
+  annotation_logticks(scaled = TRUE) +
+  background_grid(major = 'xy', minor = 'none') + 
+  xlab("log10 variant sum\n RNA/DNA BR 1") +
+  ylab("log10 variant sum\n RNA/DNA BR 2") +
+  scale_x_continuous(breaks = c(-3:1), limits = c(-3, 1.5)) + 
+  scale_y_continuous(breaks = c(-3:1), limits = c(-3, 1.5)) +
+  annotate("text", x = -2, y = 0.5,
+           label = paste('rtot =', 
+                         round(cor(rep_1_2_sum_log10$ratio_br1, 
+                                   rep_1_2_sum_log10$ratio_br2,
+                                   use = "pairwise.complete.obs", 
+                                   method = "pearson"), 2))) +
+  annotate("text", x = -2, y = 0, color = '#482677FF',
+           label = paste('r =', round(
+             cor(
+               filter(rep_1_2_sum_log10, subpool == 'subpool5')$ratio_br1, 
+               filter(rep_1_2_sum_log10, subpool == 'subpool5')$ratio_br2,
+               use = "pairwise.complete.obs", method = "pearson"), 2))) +
+  annotate("text", x = -2, y = -0.5, color = '#2D708EFF',
+           label = paste('r =', round(
+             cor(
+               filter(rep_1_2_sum_log10, subpool == 'subpool3')$ratio_br1, 
+               filter(rep_1_2_sum_log10, subpool == 'subpool3')$ratio_br2,
+               use = "pairwise.complete.obs", method = "pearson"), 2)))
 
-p_var_med_bc_2 <- ggplot(NULL, aes(barcodes_br2, med_ratio_br2_norm)) +
-  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'subpool5'),
-             color = '#482677FF', alpha = 0.3) +
-  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'subpool3'),
-             color = '#2D708EFF', alpha = 0.3) +
-  geom_point(data = filter(int_back_norm_rep_1_2_log10, subpool == 'control'),
-             color = '#3CBB75FF', alpha = 0.6) +
-  geom_point(data = filter(int_back_norm_rep_1_2_log10, 
+save_plot('plots/p_var_sum_ratio.png', p_var_sum_ratio)
+
+
+#Compare sum and med analyses---------------------------------------------------
+
+ave_rep_sum_0rm <- rep_1_2_sum_0rm(rep_1_2_sum) %>%
+  mutate(ave_sum_ratio = (ratio_br1 + ratio_br2)/2) %>%
+  var_log10()
+
+ave_rep_med_0rm <- rep_1_2_0rm(rep_1_2) %>%
+  mutate(ave_med_ratio = (med_ratio_br1 + med_ratio_br2)/2) %>%
+  var_log10()
+
+rep_sum_med <- inner_join(ave_rep_sum_0rm, ave_rep_med_0rm, 
+                          by = c('subpool', 'name', 'most_common'),
+                          suffix = c('_sum', '_med'))
+
+p_var_sum_med <- ggplot(NULL, aes(ave_sum_ratio, ave_med_ratio)) +
+  geom_point(data = filter(rep_sum_med, subpool == 'subpool5'),
+             color = '#482677FF', alpha = 0.2) +
+  geom_point(data = filter(rep_sum_med, subpool == 'subpool3'),
+             color = '#2D708EFF', alpha = 0.2) +
+  geom_density2d(data = rep_sum_med, 
+                 alpha = 0.7, color = 'black', size = 0.2, bins = 10) +
+  geom_point(data = filter(rep_sum_med, 
                            grepl(
                              'subpool5_no_site_no_site_no_site_no_site_no_site_no_site',
                              name)), 
-             color = '#B8DE29FF', alpha = 0.8) + 
-  annotation_logticks(scaled = TRUE, sides = 'l') +
-  ylab("log10 variant median\nnorm. RNA/DNA") +
-  scale_y_continuous(breaks = c(-1, 0, 1, 2, 3, 4, 5, 6, 7, 8), limits = c(-1.5, 8.5)) +
-  scale_x_continuous(breaks = c(10, 20, 30, 40, 50, 60), limits = c(5, 65)) +
-  xlab("Barcodes per variant") +
-  annotate("text", x = 15, y = 8,
-           label = paste(
-             'r =', round(
-               cor(
-                 int_back_norm_rep_1_2_log10$barcodes_br2,
-                 int_back_norm_rep_1_2_log10$med_ratio_br2_norm,
-                 use = "pairwise.complete.obs", method = "pearson"
-               ), 2
-             )
-           )
-  )
+             color = '#B8DE29FF', alpha = 0.7) + 
+  annotation_logticks(scaled = TRUE) +
+  xlab("log10 averagevariant\nsum RNA/DNA ") +
+  ylab("log10 average variant\nmedian RNA/DNA ") +
+  scale_x_continuous(breaks = c(-3:1), limits = c(-3, 1.5)) + 
+  scale_y_continuous(breaks = c(-3:1), limits = c(-3, 1.5))  +
+  background_grid(major = 'xy', minor = 'none') + 
+  annotate("text", x = -2, y = 0.5,
+           label = paste('rtot =', 
+                         round(cor(rep_sum_med$ave_sum_ratio, 
+                                   rep_sum_med$ave_med_ratio,
+                                   use = "pairwise.complete.obs", 
+                                   method = "pearson"), 2))) +
+  annotate("text", x = -2, y = 0, color = '#482677FF',
+           label = paste('r =', round(
+             cor(
+               filter(rep_sum_med, subpool == 'subpool5')$ave_sum_ratio, 
+               filter(rep_sum_med, subpool == 'subpool5')$ave_med_ratio,
+               use = "pairwise.complete.obs", method = "pearson"), 2))) +
+  annotate("text", x = -2, y = -0.5, color = '#2D708EFF',
+           label = paste('r =', round(
+             cor(
+               filter(rep_sum_med, subpool == 'subpool3')$ave_sum_ratio, 
+               filter(rep_sum_med, subpool == 'subpool3')$ave_med_ratio,
+               use = "pairwise.complete.obs", method = "pearson"), 2)))
 
-p_var_med_bc <- plot_grid(p_var_med_bc_1, p_var_med_bc_2,
-                           labels = c('BR1', 'BR2'),
-                           nrow = 1, ncol = 2, align = 'hv', 
-                           hjust = -3, vjust = 0.5, scale = 0.9)
+save_plot('plots/p_var_sum_med.png', p_var_sum_med)
 
-save_plot('plots/p_var_med_bc.png', p_var_med_bc, base_height = 4, base_width = 10)
+p_var_sum_med_madmed1 <- ggplot(NULL, aes(ave_sum_ratio, ave_med_ratio)) +
+  geom_point(data = filter(rep_sum_med, 
+                           mad_over_med_br1 != as.double(0) & subpool != 'control'),
+             color = 'black', alpha = 0.2) + 
+  geom_point(data = filter(rep_sum_med, 
+                           mad_over_med_br2 != as.double(0) & subpool != 'control'),
+             color = 'black', alpha = 0.2) + 
+  geom_point(data = filter(rep_sum_med, 
+                           mad_over_med_br1 == as.double(0) & subpool != 'control'),
+             color = 'red', alpha = 0.2) + 
+  geom_point(data = filter(rep_sum_med, 
+                           mad_over_med_br2 == as.double(0) & subpool != 'control'),
+             color = 'red', alpha = 0.2) + 
+  annotation_logticks(scaled = TRUE) +
+  xlab("log10 averagevariant\nsum RNA/DNA ") +
+  ylab("log10 average variant\nmedian RNA/DNA ") +
+  scale_x_continuous(breaks = c(-3:1), limits = c(-3, 1.5)) + 
+  scale_y_continuous(breaks = c(-3:1), limits = c(-3, 1.5)) +
+  annotate("text", x = -2, y = 0.5,
+           label = paste('rtot =', 
+                         round(cor(rep_sum_med$ave_sum_ratio, 
+                                   rep_sum_med$ave_med_ratio,
+                                   use = "pairwise.complete.obs", 
+                                   method = "pearson"), 2)))
 
 
-#Finding variants for extra analyses-------------------------------------------------------
+#Finding variants for extra analyses--------------------------------------------
 
 #Finding variants for Rishi
 
@@ -649,13 +799,16 @@ p_var_med_ratio <- ggplot(NULL, aes(med_ratio_br1, med_ratio_br2)) +
   geom_point(data = filter(log2_rep_1_2), alpha = 0.2) +
   geom_point(data = filter(log2_rep_1_2, 
                            name == 'subpool5_weak_consensus_consensus_consensus_consensus_consensus_Vista Chr5:88673410-88674494'),
-             fill = '#404788FF', color = 'black', stroke = 0.2, size = 3, shape = 21) +
+             fill = '#404788FF', color = 'black', 
+             stroke = 0.2, size = 3, shape = 21) +
   geom_point(data = filter(log2_rep_1_2, 
                            name == 'subpool5_consensus_weak_consensus_weak_consensus_consensus_Vista Chr5:88673410-88674494' | name == 'subpool5_consensus_weak_consensus_no_site_consensus_consensus_Vista Chr5:88673410-88674494'),
-             fill = '#1F968BFF', color = 'black', stroke = 0.2, size = 3, shape = 21) +
+             fill = '#1F968BFF', color = 'black', 
+             stroke = 0.2, size = 3, shape = 21) +
   geom_point(data = filter(log2_rep_1_2, 
                            name == 'pGL4.29 Promega 1-63 + 1-87'),
-             fill = '#95D840FF', color = 'black', stroke = 0.2, size = 3, shape = 21) +
+             fill = '#95D840FF', color = 'black', 
+             stroke = 0.2, size = 3, shape = 21) +
   annotation_logticks(scaled = TRUE) +
   xlab("log2 variant median\nnorm. RNA/DNA BR 1") +
   ylab("log2 variant median\nnorm. RNA/DNA BR 2") +
