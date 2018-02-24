@@ -106,7 +106,7 @@ ratio_bc_med_var <- function(df1) {
   bc_count_DNA <- df1 %>%
     group_by(subpool, name, most_common) %>%
     summarize(barcodes_DNA = n()) %>%
-    filter(barcodes_DNA > 7)
+    filter(barcodes_DNA > 2)
   bc_count_RNA <- df1 %>%
     group_by(subpool, name, most_common) %>%
     filter(num_reads_RNA != 0) %>%
@@ -116,11 +116,9 @@ ratio_bc_med_var <- function(df1) {
   med_ratio <- df1 %>%
     group_by(subpool, name, most_common) %>%
     summarize(med_ratio = median(ratio))
-  mad_ratio <- inner_join(df1, med_ratio, 
-                          by = c('subpool', 'name', 'most_common')) %>%
-    mutate(absdev = abs(ratio - med_ratio)) %>%
+  mad_ratio <- df1 %>%
     group_by(subpool, name, most_common) %>%
-    summarize(mad = median(absdev))
+    summarize(mad = mad(ratio))
   med_mad <- inner_join(med_ratio, mad_ratio, 
                         by = c('subpool', 'name', 'most_common')) %>%
     mutate(mad_over_med = as.double(mad/med_ratio)) %>%
@@ -149,6 +147,38 @@ med_ratio_2 <- ratio_bc_med_var(bc_ave_DNA_RNA_2)
 rep_1_2 <- inner_join(med_ratio_1, med_ratio_2,
              by = c("name", "subpool", "most_common"),
              suffix = c('_br1', '_br2'))
+
+med_mad_gather <- function(df1) {
+  med <- df1 %>%
+    select(subpool, name, med_ratio_br1, med_ratio_br2) %>%
+    gather(med_ratio_br1, med_ratio_br2, key = condition, value = med) %>%
+    separate(condition, into = c("fluff1", "fluff2", "condition"),
+             sep = "_", convert = TRUE) %>% 
+    select(-fluff1, -fluff2)
+  mad_over_med <- df1 %>%
+    select(subpool, name, mad_over_med_br1, mad_over_med_br2) %>%
+    gather(mad_over_med_br1, mad_over_med_br2, 
+           key = condition, value = mad_over_med) %>%
+    separate(condition, into = c("fluff1", "fluff2", "fluff3", "condition"),
+             sep = "_", convert = TRUE) %>% 
+    select(-fluff1, -fluff2, -fluff3)
+  med_mad <- inner_join(med, mad_over_med, 
+                        by = c('subpool', 'name', 'condition'))
+  return(med_mad)
+}
+
+med_mad_rep_1_2 <- med_mad_gather(rep_1_2)
+
+ggplot(med_mad_rep_1_2, aes(mad_over_med)) +
+  geom_density(kernel = 'gaussian') +
+  facet_grid(subpool ~ condition) + 
+  panel_border() +
+  xlab('MAD/Med')
+
+ggplot(med_mad_rep_1_2, aes(mad_over_med, med)) +
+  ylab('MAD/Med') +
+  geom_point(aes(alpha = 0.3))
+
 
 back_norm <- function(df1) {
   gsub_1_2 <- df1 %>%
