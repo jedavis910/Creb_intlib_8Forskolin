@@ -133,6 +133,17 @@ ratio_bc_med_var <- function(df1) {
 }
 
 med_ratio_1 <- ratio_bc_med_var(bc_ave_DNA_RNA_1)
+
+test <- med_ratio_1 %>%
+  filter(mad_over_med == 1.48260000) %>%
+  arrange(desc(med_ratio)) %>%
+  head(1)
+
+follow <- left_join(test, bc_ave_DNA_RNA_1, 
+                    by = c('subpool', 'name', 'most_common'))
+
+write_csv(follow, 'highmed_mad1.csv')
+  
 med_ratio_2 <- ratio_bc_med_var(bc_ave_DNA_RNA_2)
 
 
@@ -147,38 +158,6 @@ med_ratio_2 <- ratio_bc_med_var(bc_ave_DNA_RNA_2)
 rep_1_2 <- inner_join(med_ratio_1, med_ratio_2,
              by = c("name", "subpool", "most_common"),
              suffix = c('_br1', '_br2'))
-
-med_mad_gather <- function(df1) {
-  med <- df1 %>%
-    select(subpool, name, med_ratio_br1, med_ratio_br2) %>%
-    gather(med_ratio_br1, med_ratio_br2, key = condition, value = med) %>%
-    separate(condition, into = c("fluff1", "fluff2", "condition"),
-             sep = "_", convert = TRUE) %>% 
-    select(-fluff1, -fluff2)
-  mad_over_med <- df1 %>%
-    select(subpool, name, mad_over_med_br1, mad_over_med_br2) %>%
-    gather(mad_over_med_br1, mad_over_med_br2, 
-           key = condition, value = mad_over_med) %>%
-    separate(condition, into = c("fluff1", "fluff2", "fluff3", "condition"),
-             sep = "_", convert = TRUE) %>% 
-    select(-fluff1, -fluff2, -fluff3)
-  med_mad <- inner_join(med, mad_over_med, 
-                        by = c('subpool', 'name', 'condition'))
-  return(med_mad)
-}
-
-med_mad_rep_1_2 <- med_mad_gather(rep_1_2)
-
-ggplot(med_mad_rep_1_2, aes(mad_over_med)) +
-  geom_density(kernel = 'gaussian') +
-  facet_grid(subpool ~ condition) + 
-  panel_border() +
-  xlab('MAD/Med')
-
-ggplot(med_mad_rep_1_2, aes(mad_over_med, med)) +
-  ylab('MAD/Med') +
-  geom_point(aes(alpha = 0.3))
-
 
 back_norm <- function(df1) {
   gsub_1_2 <- df1 %>%
@@ -315,6 +294,41 @@ output_int_controls <- controls %>%
 
 #plot variant statistics and rep plots-------------------------------------------------------
 
+#Mad over median analysis
+
+med_mad_gather <- function(df1) {
+  med <- df1 %>%
+    select(subpool, name, med_ratio_br1, med_ratio_br2) %>%
+    gather(med_ratio_br1, med_ratio_br2, key = condition, value = med) %>%
+    separate(condition, into = c("fluff1", "fluff2", "condition"),
+             sep = "_", convert = TRUE) %>% 
+    select(-fluff1, -fluff2)
+  mad_over_med <- df1 %>%
+    select(subpool, name, mad_over_med_br1, mad_over_med_br2) %>%
+    gather(mad_over_med_br1, mad_over_med_br2, 
+           key = condition, value = mad_over_med) %>%
+    separate(condition, into = c("fluff1", "fluff2", "fluff3", "condition"),
+             sep = "_", convert = TRUE) %>% 
+    select(-fluff1, -fluff2, -fluff3)
+  med_mad <- inner_join(med, mad_over_med, 
+                        by = c('subpool', 'name', 'condition'))
+  return(med_mad)
+}
+
+med_mad_rep_1_2 <- med_mad_gather(rep_1_2)
+
+ggplot(med_mad_rep_1_2, aes(mad_over_med)) +
+  geom_density(kernel = 'gaussian') +
+  facet_grid(subpool ~ condition) + 
+  panel_border() +
+  xlab('MAD/Med')
+
+ggplot(med_mad_rep_1_2, aes(med, mad_over_med)) +
+  ylab('Mad/Med') +
+  xlab('Median') +
+  geom_point(alpha = 0.3)
+
+
 #comparing subpool expression
 
 rep_1_2_0corr <- function(df1) {
@@ -338,8 +352,9 @@ rep_1_2_0rm <- function(df1) {
 rep_1_2_log10 <- rep_1_2_0rm(rep_1_2) %>%
   var_log10()
 
-test <- rep_1_2_0rm(rep_1_2) %>%
-  filter(mad_over_med_br1 == 1 | mad_over_med_br2 == 1)
+rep_1_2_log10_madomed <- rep_1_2_0rm(rep_1_2) %>%
+  filter(mad_over_med_br1 == 1.48260000 | mad_over_med_br2 == 1.48260000) %>%
+  var_log10()
 
 p_var_med_ratio <- ggplot(NULL, aes(med_ratio_br1, med_ratio_br2)) +
   geom_point(data = filter(rep_1_2_log10, subpool == 'subpool5'),
@@ -381,18 +396,8 @@ p_var_med_ratio <- ggplot(NULL, aes(med_ratio_br1, med_ratio_br2)) +
 save_plot('plots/p_var_med_ratio.png', p_var_med_ratio)
 
 p_var_med_ratio_madmed1 <- ggplot(NULL, aes(med_ratio_br1, med_ratio_br2)) +
-  geom_point(data = filter(rep_1_2_log10, 
-                           mad_over_med_br1 != as.double(0) & subpool != 'control'),
-             color = 'black', alpha = 0.2) + 
-  geom_point(data = filter(rep_1_2_log10, 
-                           mad_over_med_br2 != as.double(0) & subpool != 'control'),
-             color = 'black', alpha = 0.2) + 
-  geom_point(data = filter(rep_1_2_log10, 
-                         mad_over_med_br1 == as.double(0) & subpool != 'control'),
-           color = 'red', alpha = 0.2) + 
-  geom_point(data = filter(rep_1_2_log10, 
-                           mad_over_med_br2 == as.double(0) & subpool != 'control'),
-             color = 'red', alpha = 0.2) + 
+  geom_point(data = rep_1_2_log10, color = 'black', alpha = 0.2) + 
+  geom_point(data = rep_1_2_log10_madomed, color = 'red', alpha = 0.2) + 
   annotation_logticks(scaled = TRUE) +
   xlab("log10 variant median\n RNA/DNA BR 1") +
   ylab("log10 variant median\n RNA/DNA BR 2") +
@@ -405,8 +410,10 @@ p_var_med_ratio_madmed1 <- ggplot(NULL, aes(med_ratio_br1, med_ratio_br2)) +
                                    use = "pairwise.complete.obs", 
                                    method = "pearson"), 2)))
 
+save_plot('plots/p_var_med_ratio_madmed1.png', p_var_med_ratio_madmed1)
 
-#Plot subpool expression features-----------------------------------------------------------
+
+#Plot subpool expression features-----------------------------------------------
 
 #Subpool 3
 
