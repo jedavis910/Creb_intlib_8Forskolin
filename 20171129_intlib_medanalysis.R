@@ -3,6 +3,11 @@ library(stringr)
 library(viridis)
 library(cowplot)
 library(ggExtra)
+library(modelr)
+library(lazyeval)
+library(splines)
+library(broom)
+library(GGally)
 
 #Written for the analysis of integrated library expression at 8 µM. 2 biological
 #replicates and 2 technical replicates each for DNA amplification
@@ -69,12 +74,12 @@ bc_join_RNA_2 <- bc_map_join_bc(SP3_SP5_map, bc_RNA_2)
 
 #Join DNA and RNA BC------------------------------------------------------------
 
-#Join DNA BC reads > 2, take average norm. reads and join to RNA. Take ratio of 
+#Join DNA BC reads > 6, take average norm. reads and join to RNA. Take ratio of 
 #RNA/DNA norm reads
 
 ave_dna_join_rna_rep <- function(df1, df2, df3) {
-  filter_reads_1 <- filter(df1, num_reads > 2)
-  filter_reads_2 <- filter(df2, num_reads > 2)
+  filter_reads_1 <- filter(df1, num_reads > 6)
+  filter_reads_2 <- filter(df2, num_reads > 6)
   DNA_join <- inner_join(filter_reads_1, filter_reads_2, 
                          by = c("barcode", "name", "subpool", "most_common"), 
                          suffix = c("_DNA_tr1", "_DNA_tr2")) %>%
@@ -98,7 +103,7 @@ bc_ave_DNA_RNA_2 <- ave_dna_join_rna_rep(bc_join_DNA_2_1, bc_join_DNA_2_2,
 
 #Barcodes per variant and median RNA/DNA----------------------------------------
 
-#Count barcodes per variant per DNA and RNA, set minimum of 7 BC's per variant 
+#Count barcodes per variant per DNA and RNA, set minimum of 3 BC's per variant 
 #in DNA sample, take median RNA/DNA per variant, find absolute deviation for
 #each BC per variant then per variant determine the median absolute deviation.
 
@@ -111,7 +116,7 @@ ratio_bc_med_var <- function(df1) {
     group_by(subpool, name, most_common) %>%
     filter(num_reads_RNA != 0) %>%
     summarize(barcodes_RNA = n())
-  bc_DNA_RNA <- inner_join(bc_count_DNA, bc_count_RNA, 
+  bc_DNA_RNA <- left_join(bc_count_DNA, bc_count_RNA, 
                            by = c('subpool', 'name', 'most_common'))
   med_ratio <- df1 %>%
     group_by(subpool, name, most_common) %>%
@@ -133,17 +138,6 @@ ratio_bc_med_var <- function(df1) {
 }
 
 med_ratio_1 <- ratio_bc_med_var(bc_ave_DNA_RNA_1)
-
-test <- med_ratio_1 %>%
-  filter(mad_over_med == 1.48260000) %>%
-  arrange(desc(med_ratio)) %>%
-  head(1)
-
-follow <- left_join(test, bc_ave_DNA_RNA_1, 
-                    by = c('subpool', 'name', 'most_common'))
-
-write_csv(follow, 'highmed_mad1.csv')
-  
 med_ratio_2 <- ratio_bc_med_var(bc_ave_DNA_RNA_2)
 
 
@@ -155,9 +149,16 @@ med_ratio_2 <- ratio_bc_med_var(bc_ave_DNA_RNA_2)
 #background in that biological replicate. Determine average normalized 
 #expression across biological replicates.
 
+rep_1_2_0rm <- function(df1) {
+  df1 <- df1 %>%
+    filter(med_ratio_br1 != as.double(0)) %>%
+    filter(med_ratio_br2 != as.double(0))
+}
+
 rep_1_2 <- inner_join(med_ratio_1, med_ratio_2,
              by = c("name", "subpool", "most_common"),
-             suffix = c('_br1', '_br2'))
+             suffix = c('_br1', '_br2')) %>%
+  rep_1_2_0rm()
 
 back_norm <- function(df1) {
   gsub_1_2 <- df1 %>%
@@ -204,6 +205,8 @@ var_log10 <- function(df) {
   return(log_ratio_df)
 }
 
+rep_1_2_log10 <- var_log10(rep_1_2)
+
 int_back_norm_rep_1_2_log10 <- var_log10(int_back_norm_rep_1_2)
 
 #Separate into subpools----------------------------------------------------------------------
@@ -237,14 +240,13 @@ subpool3 <-
 #site. Both the weak and consensus sites are flanked by the same flanking sequence. 
 
 subpool5 <- 
-  filter(int_back_norm_rep_1_2_log10, subpool == "subpool5") %>%
+  filter(int_back_norm_rep_1_2, subpool == "subpool5") %>%
   ungroup () %>%
   select(-subpool) %>%
   mutate(name = gsub('no_site', 'nosite', name)) %>%
   separate(name, into = c(
     "subpool", "site1", "site2", "site3", "site4", "site5", "site6", 
-    "fluff"), sep = "_"
-  ) %>%
+    "fluff"), sep = "_") %>%
   select(-subpool, -fluff) %>%
   mutate(consensus = str_detect(site1, "consensus") + 
            str_detect(site2, "consensus") + 
@@ -280,9 +282,9 @@ controls <-
 
 #Write table to compare expression to other analyses-----------------------------------------
 
-output_int <- int_back_norm_rep_1_2 %>%
+output_int <- rep_1_2 %>%
   write.table(
-    "int_back_norm_rep_1_2.txt", 
+    "rep_1_2.txt", 
     sep = '\t', row.names = FALSE)
 
 output_int_controls <- controls %>%
@@ -293,6 +295,31 @@ output_int_controls <- controls %>%
 
 
 #plot variant statistics and rep plots-------------------------------------------------------
+
+#replicates
+
+p_var_med_ratio <- ggplot(rep_1_2_log10, aes(med_ratio_br1, med_ratio_br2)) +
+  geom_point(alpha = 0.2) +
+  geom_point(data = filter(rep_1_2_log10, 
+                           grepl(
+                             'subpool5_no_site_no_site_no_site_no_site_no_site_no_site',
+                             name)), 
+             color = 'red', alpha = 0.7) + 
+  annotation_logticks(scaled = TRUE) +
+  xlab("log10 variant median\n RNA/DNA BR 1") +
+  ylab("log10 variant median\n RNA/DNA BR 2") +
+  scale_x_continuous(breaks = c(-3:1), limits = c(-3, 1.5)) + 
+  scale_y_continuous(breaks = c(-3:1), limits = c(-3, 1.5))  +
+  background_grid(major = 'xy', minor = 'none') + 
+  annotate("text", x = -2, y = 0.5,
+           label = paste('r =', 
+                         round(cor(rep_1_2_log10$med_ratio_br1, 
+                                   rep_1_2_log10$med_ratio_br2,
+                                   use = "pairwise.complete.obs", 
+                                   method = "pearson"), 2))) 
+
+save_plot('plots/p_var_med_ratio.png', p_var_med_ratio)
+
 
 #Mad over median analysis
 
@@ -328,72 +355,9 @@ ggplot(med_mad_rep_1_2, aes(med, mad_over_med)) +
   xlab('Median') +
   geom_point(alpha = 0.3)
 
-
-#comparing subpool expression
-
-rep_1_2_0corr <- function(df1) {
-  df1 <- df1 %>%
-    mutate(med_ratio_br1 = if_else(
-      med_ratio_br1 == as.double(0),
-      as.double(0.01), 
-      med_ratio_br1)) %>%
-    mutate(med_ratio_br2 = if_else(
-      med_ratio_br2 == as.double(0),
-      as.double(0.01), 
-      med_ratio_br2))
-}
-
-rep_1_2_0rm <- function(df1) {
-  df1 <- df1 %>%
-    filter(med_ratio_br1 != as.double(0)) %>%
-    filter(med_ratio_br2 != as.double(0))
-}
-
-rep_1_2_log10 <- rep_1_2_0rm(rep_1_2) %>%
-  var_log10()
-
 rep_1_2_log10_madomed <- rep_1_2_0rm(rep_1_2) %>%
   filter(mad_over_med_br1 == 1.48260000 | mad_over_med_br2 == 1.48260000) %>%
   var_log10()
-
-p_var_med_ratio <- ggplot(NULL, aes(med_ratio_br1, med_ratio_br2)) +
-  geom_point(data = filter(rep_1_2_log10, subpool == 'subpool5'),
-             color = '#482677FF', alpha = 0.2) +
-  geom_point(data = filter(rep_1_2_log10, subpool == 'subpool3'),
-             color = '#2D708EFF', alpha = 0.2) +
-  geom_density2d(data = rep_1_2_log10, 
-                 alpha = 0.7, color = 'black', size = 0.2, bins = 10) +
-  geom_point(data = filter(rep_1_2_log10, 
-                           grepl(
-                             'subpool5_no_site_no_site_no_site_no_site_no_site_no_site',
-                             name)), 
-             color = '#B8DE29FF', alpha = 0.7) + 
-  annotation_logticks(scaled = TRUE) +
-  xlab("log10 variant median\n RNA/DNA BR 1") +
-  ylab("log10 variant median\n RNA/DNA BR 2") +
-  scale_x_continuous(breaks = c(-3:1), limits = c(-3, 1.5)) + 
-  scale_y_continuous(breaks = c(-3:1), limits = c(-3, 1.5))  +
-  background_grid(major = 'xy', minor = 'none') + 
-  annotate("text", x = -2, y = 0.5,
-           label = paste('rtot =', 
-                         round(cor(rep_1_2_log10$med_ratio_br1, 
-                                   rep_1_2_log10$med_ratio_br2,
-                                   use = "pairwise.complete.obs", 
-                                   method = "pearson"), 2))) +
-  annotate("text", x = -2, y = 0, color = '#482677FF',
-           label = paste('r =', round(
-             cor(
-               filter(rep_1_2_log10, subpool == 'subpool5')$med_ratio_br1, 
-               filter(rep_1_2_log10, subpool == 'subpool5')$med_ratio_br2,
-               use = "pairwise.complete.obs", method = "pearson"), 2))) +
-  annotate("text", x = -2, y = -0.5, color = '#2D708EFF',
-         label = paste('r =', round(
-           cor(
-             filter(rep_1_2_log10, subpool == 'subpool3')$med_ratio_br1, 
-             filter(rep_1_2_log10, subpool == 'subpool3')$med_ratio_br2,
-             use = "pairwise.complete.obs", method = "pearson"), 2)))
-
-save_plot('plots/p_var_med_ratio.png', p_var_med_ratio)
 
 p_var_med_ratio_madmed1 <- ggplot(NULL, aes(med_ratio_br1, med_ratio_br2)) +
   geom_point(data = rep_1_2_log10, color = 'black', alpha = 0.2) + 
@@ -470,163 +434,181 @@ save_plot('plots/p_subpool5_cons_mix_sitenum.png', p_subpool5_cons_mix_sitenum,
 
 #Plot BC statistics and rep plots------------------------------------------------------------
 
-#BC num reads
+#BC num reads + #BC's
 
 p_BC_num_reads_viol_full <- ggplot(NULL) +
   geom_violin(data = bc_ave_DNA_RNA_1, 
-              aes(x = 'DNA BR1 TR1', y = num_reads_DNA_tr1, color = subpool)) +
+              aes(x = 'DNA BR1 TR1', y = num_reads_DNA_tr1)) +
   geom_violin(data = bc_ave_DNA_RNA_1, 
-              aes(x = 'DNA BR1 TR2', y = num_reads_DNA_tr2, color = subpool)) +
+              aes(x = 'DNA BR1 TR2', y = num_reads_DNA_tr2)) +
   geom_violin(data = bc_ave_DNA_RNA_1, 
-              aes(x = 'RNA BR1', y = num_reads_RNA, color = subpool)) +
+              aes(x = 'RNA BR1', y = num_reads_RNA)) +
   geom_violin(data = bc_ave_DNA_RNA_2, 
-              aes(x = 'DNA BR2 TR1', y = num_reads_DNA_tr1, color = subpool)) +
+              aes(x = 'DNA BR2 TR1', y = num_reads_DNA_tr1)) +
   geom_violin(data = bc_ave_DNA_RNA_2, 
-              aes(x = 'DNA BR2 TR2', y = num_reads_DNA_tr2, color = subpool)) +
+              aes(x = 'DNA BR2 TR2', y = num_reads_DNA_tr2)) +
   geom_violin(data = bc_ave_DNA_RNA_2, 
-              aes(x = 'RNA BR2', y = num_reads_RNA, color = subpool)) +
+              aes(x = 'RNA BR2', y = num_reads_RNA)) +
   xlab("") +
   ylab("Reads per BC")
   
-save_plot('plots/BC_num_reads_viol_full.png',
-          p_BC_num_reads_viol_full, scale = 2.2)
+save_plot('plots/BC_num_reads_viol_full.png', p_BC_num_reads_viol_full, 
+          scale = 1.3, base_width = 6.5, base_height = 3)
 
 p_BC_num_reads_box_zoom <- ggplot(NULL) +
   geom_boxplot(data = bc_ave_DNA_RNA_1, 
-              aes(x = 'DNA BR1 TR1', y = num_reads_DNA_tr1, color = subpool)) +
+              aes(x = 'DNA BR1 TR1', y = num_reads_DNA_tr1)) +
   geom_boxplot(data = bc_ave_DNA_RNA_1, 
-              aes(x = 'DNA BR1 TR2', y = num_reads_DNA_tr2, color = subpool)) +
+              aes(x = 'DNA BR1 TR2', y = num_reads_DNA_tr2)) +
   geom_boxplot(data = bc_ave_DNA_RNA_1, 
-              aes(x = 'RNA BR1', y = num_reads_RNA, color = subpool)) +
+              aes(x = 'RNA BR1', y = num_reads_RNA)) +
   geom_boxplot(data = bc_ave_DNA_RNA_2, 
-              aes(x = 'DNA BR2 TR1', y = num_reads_DNA_tr1, color = subpool)) +
+              aes(x = 'DNA BR2 TR1', y = num_reads_DNA_tr1)) +
   geom_boxplot(data = bc_ave_DNA_RNA_2, 
-              aes(x = 'DNA BR2 TR2', y = num_reads_DNA_tr2, color = subpool)) +
+              aes(x = 'DNA BR2 TR2', y = num_reads_DNA_tr2)) +
   geom_boxplot(data = bc_ave_DNA_RNA_2, 
-              aes(x = 'RNA BR2', y = num_reads_RNA, color = subpool)) +
+              aes(x = 'RNA BR2', y = num_reads_RNA)) +
   xlab("") +
   ylab("Reads per BC") + ylim(0, 25)
 
-save_plot('plots/BC_num_reads_box_zoom.png',
-          p_BC_num_reads_box_zoom, scale = 2.2)
+save_plot('plots/BC_num_reads_box_zoom.png', p_BC_num_reads_box_zoom, 
+          scale = 1.3,base_width = 6.5, base_height = 3)
+
+p_BC_number <- ggplot(NULL) +
+  geom_boxplot(data = rep_1_2, aes(x = 'DNA_br1', y = barcodes_DNA_br1)) +
+  geom_boxplot(data = rep_1_2, aes(x = 'DNA_br2', y = barcodes_DNA_br2)) +
+  geom_boxplot(data = rep_1_2, aes(x = 'RNA_br1', y = barcodes_RNA_br1)) +
+  geom_boxplot(data = rep_1_2, aes(x = 'RNA_br2', y = barcodes_RNA_br2)) +
+  xlab('') +
+  ylab('BCs/variant') +
+  background_grid(major = 'y')
+
+save_plot('plots/BC_number.png', p_BC_number, scale = 1.3)
+
 
 #BC normalized reads rep (need to log transform normalized reads first to compare, RNA and 
 #ave DNA comparison required merging BC's that are present in each br (DNA and RNA))
 
-norm_DNA_RNA_0corr <- function(df1) {
-  df1 <- df1 %>%
-    mutate(norm_DNA_tr1 = if_else(
-      norm_DNA_tr1 == as.double(0),
-      as.double(0.01), 
-      norm_DNA_tr1)) %>%
-    mutate(norm_DNA_tr2 = if_else(
-      norm_DNA_tr2 == as.double(0),
-      as.double(0.01), 
-      norm_DNA_tr2)) %>%
-    mutate(norm_RNA = if_else(
-      norm_RNA == as.double(0),
-      as.double(0.01), 
-      norm_RNA))
-}
-
-bc_log_ave_DNA_RNA_1 <- norm_DNA_RNA_0corr(bc_ave_DNA_RNA_1) %>%
-  var_log10()
-bc_log_ave_DNA_RNA_2 <- norm_DNA_RNA_0corr(bc_ave_DNA_RNA_2) %>%
-  var_log10()
-bc_log_ave_br <- inner_join(bc_log_ave_DNA_RNA_1, bc_log_ave_DNA_RNA_2, 
-                            by = c("barcode", "name", "subpool", "most_common"),
-                            suffix = c('_br1', '_br2'))
-
-p_bc_rep_DNA1 <- ggplot(data = NULL, aes(norm_DNA_tr1, norm_DNA_tr2)) +
-  geom_point(data = filter(bc_log_ave_DNA_RNA_1, subpool == 'subpool5'),
-             color = '#482677FF', alpha = 0.2) +
-  geom_point(data = filter(bc_log_ave_DNA_RNA_1, subpool == 'subpool3'),
-             color = '#2D708EFF', alpha = 0.2) +
-  geom_point(data = filter(bc_log_ave_DNA_RNA_1, subpool == 'control'),
-             color = '#3CBB75FF', alpha = 0.2) +
+p_bc_rep_DNA1 <- ggplot(data = var_log10(bc_ave_DNA_RNA_1), 
+                        aes(norm_DNA_tr1, norm_DNA_tr2)) +
+  geom_point(alpha = 0.2) +
   annotation_logticks(scaled = TRUE) +
   xlab("Log10 norm. BC reads TR 1") +
   ylab("Log10 norm. BC reads TR 2") +
   background_grid(major = 'xy', minor = 'none') + 
-  scale_x_continuous(breaks = c(-2:3), limits = c(-2.5, 3.5)) + 
-  scale_y_continuous(breaks = c(-2:3), limits = c(-2.5, 3.5)) + 
-  annotate("text", x = -2, y = 3,
-           label = paste(
-             'r =', round(
-               cor(bc_log_ave_DNA_RNA_1$norm_DNA_tr1, 
-                   bc_log_ave_DNA_RNA_1$norm_DNA_tr2,
-                   use = "pairwise.complete.obs", method = "pearson"), 2)))
+  scale_x_continuous(breaks = c(0:2), limits = c(-0.5,2.5)) + 
+  scale_y_continuous(breaks = c(0:2), limits = c(-0.5,2.5)) + 
+  annotate("text", x = 0, y = 2, 
+           label = paste('r =', 
+                         round(cor(var_log10(bc_ave_DNA_RNA_1)$norm_DNA_tr1, 
+                                   var_log10(bc_ave_DNA_RNA_1)$norm_DNA_tr2,
+                                   use = "pairwise.complete.obs", 
+                                   method = "pearson"), 2)))
 
-p_bc_rep_DNA2 <- ggplot(data = NULL, aes(norm_DNA_tr1, norm_DNA_tr2)) +
-  geom_point(data = filter(bc_log_ave_DNA_RNA_2, subpool == 'subpool5'),
-             color = '#482677FF', alpha = 0.2) +
-  geom_point(data = filter(bc_log_ave_DNA_RNA_2, subpool == 'subpool3'),
-             color = '#2D708EFF', alpha = 0.2) +
-  geom_point(data = filter(bc_log_ave_DNA_RNA_2, subpool == 'control'),
-             color = '#3CBB75FF', alpha = 0.2) +
+p_bc_rep_DNA2 <- ggplot(data = var_log10(bc_ave_DNA_RNA_2), 
+                        aes(norm_DNA_tr1, norm_DNA_tr2)) +
+  geom_point(alpha = 0.2) +
   annotation_logticks(scaled = TRUE) +
   xlab("Log10 norm. BC reads TR 1") +
   ylab("Log10 norm. BC reads TR 2") +
   background_grid(major = 'xy', minor = 'none') + 
-  scale_x_continuous(breaks = c(-2:3), limits = c(-2.5, 3.5)) + 
-  scale_y_continuous(breaks = c(-2:3), limits = c(-2.5, 3.5)) + 
-  annotate("text", x = -2, y = 3,
-           label = paste(
-             'r =', round(
-               cor(bc_log_ave_DNA_RNA_2$norm_DNA_tr1, 
-                   bc_log_ave_DNA_RNA_2$norm_DNA_tr2,
-                   use = "pairwise.complete.obs", method = "pearson"), 2)))
+  scale_x_continuous(breaks = c(0:2), limits = c(-0.5,2.5)) + 
+  scale_y_continuous(breaks = c(0:2), limits = c(-0.5,2.5)) + 
+  annotate("text", x = 0, y = 2, 
+           label = paste('r =', 
+                         round(cor(var_log10(bc_ave_DNA_RNA_2)$norm_DNA_tr1, 
+                                   var_log10(bc_ave_DNA_RNA_2)$norm_DNA_tr2,
+                                   use = "pairwise.complete.obs", 
+                                   method = "pearson"), 2)))
 
-p_bc_rep_ave <- ggplot(data = NULL, aes(ave_norm_DNA_br1, ave_norm_DNA_br2)) +
-  geom_point(data = filter(bc_log_ave_br, subpool == 'subpool5'),
-             color = '#482677FF', alpha = 0.2) +
-  geom_point(data = filter(bc_log_ave_br, subpool == 'subpool3'),
-             color = '#2D708EFF', alpha = 0.2) +
-  geom_point(data = filter(bc_log_ave_br, subpool == 'control'),
-             color = '#3CBB75FF', alpha = 0.2) +
-  annotation_logticks(scaled = TRUE) +
-  xlab("Ave log10 norm. BC reads BR 1") +
-  ylab("Ave log10 norm. BC reads BR 2") +
-  background_grid(major = 'xy', minor = 'none') + 
-  scale_x_continuous(breaks = c(-2:3), limits = c(-2.5, 3.5)) + 
-  scale_y_continuous(breaks = c(-2:3), limits = c(-2.5, 3.5)) + 
-  annotate("text", x = -2, y = 3,
-           label = paste('r =', round(cor(bc_log_ave_br$ave_norm_DNA_br1,
-                                          bc_log_ave_br$ave_norm_DNA_br2,
-                                          use = "pairwise.complete.obs", 
-                                          method = "pearson"), 2)))
-
-p_bc_rep_RNA <- ggplot(data = NULL, aes(norm_RNA_br1, norm_RNA_br2)) +
-  geom_point(data = filter(bc_log_ave_br, subpool == 'subpool5'),
-             color = '#482677FF', alpha = 0.2) +
-  geom_point(data = filter(bc_log_ave_br, subpool == 'subpool3'),
-             color = '#2D708EFF', alpha = 0.2) +
-  geom_point(data = filter(bc_log_ave_br, subpool == 'control'),
-             color = '#3CBB75FF', alpha = 0.2) +
-  annotation_logticks(scaled = TRUE) +
-  xlab("Log10 norm. BC reads BR 1") +
-  ylab("Log10 norm. BC reads BR 2") +
-  background_grid(major = 'xy', minor = 'none') + 
-  scale_x_continuous(breaks = c(-2:3), limits = c(-2.5, 3.5)) + 
-  scale_y_continuous(breaks = c(-2:3), limits = c(-2.5, 3.5)) + 
-  annotate("text", x = -2, y = 3, 
-           label = paste('r =', round(cor(bc_log_ave_br$norm_RNA_br1,
-                                          bc_log_ave_br$norm_RNA_br2,
-                                          use = "pairwise.complete.obs", 
-                                          method = "pearson"), 2)))
-
-p_bc_rep_grid <- plot_grid(p_bc_rep_DNA1, p_bc_rep_DNA2, p_bc_rep_ave, 
-                           p_bc_rep_RNA,
-                           labels = c(
-                             'BR1 DNA', 'BR2 DNA', 'Ave DNA', '      RNA'),
-                           nrow = 2, ncol = 2, align = 'hv', 
-                           hjust = -2, vjust = 0.5, scale = 0.9)
+p_bc_rep_grid <- plot_grid(p_bc_rep_DNA1, p_bc_rep_DNA2, 
+                           labels = c('BR1 DNA', 'BR2 DNA'), align = 'h', 
+                           hjust = -1.2, vjust = 0.1, scale = 0.9)
 
 save_plot('plots/p_bc_rep_grid.png', p_bc_rep_grid, 
-          base_height = 7, base_width = 10)
+          base_height = 3, base_width = 6, scale = 1.3)
+
+
+#Fitting a model to the 6-site library------------------------------------------
+
+pred_resid <- function(df1, x) {
+  df2 <- df1 %>%
+    add_predictions(x)
+  df3 <- df2 %>%
+    add_residuals(x)
+  return(df3)
+  print('processed pre_res_trans_int(df1, df2) in order of (data, model)')
+}
+
+
+#Linear models
+
+ind_site_ind_back <- function(df) {
+  model <- lm(ave_med_ratio_norm ~ site1 + site2 + site3 + site4 + site5 + site6 + background, 
+              data = df)
+}
+
+subpool5_ncw <- subpool5 %>%
+  mutate(site1 = gsub('nosite', 'anosite', site1)) %>%
+  mutate(site2 = gsub('nosite', 'anosite', site2)) %>%
+  mutate(site3 = gsub('nosite', 'anosite', site3)) %>%
+  mutate(site4 = gsub('nosite', 'anosite', site4)) %>%
+  mutate(site5 = gsub('nosite', 'anosite', site5)) %>%
+  mutate(site6 = gsub('nosite', 'anosite', site6))
+
+ind_site_ind_back_fit <- ind_site_ind_back(subpool5_ncw)
+ind_site_ind_back_sum <- tidy(ind_site_ind_back_fit) %>%
+  filter(str_detect(term, '^site')) %>%
+  mutate(term = gsub('consensus', '_consensus', term)) %>%
+  mutate(term = gsub('weak', '_weak', term)) %>%
+  separate(term, into = c('site', 'type'), sep = "_")
+
+ind_site_ind_back_anova <- tidy(anova(ind_site_ind_back_fit)) %>%
+  mutate(term_fctr = factor(term, levels = term))
+ind_site_ind_back_p_r <- pred_resid(subpool5_ncw, ind_site_ind_back_fit)
+
+p_ind_site_ind_back <- ggplot(ind_site_ind_back_p_r, 
+                              aes(ave_med_ratio_norm, pred, fill = consensus)) +
+  geom_point(shape = 21, alpha = 0.5) +
+  scale_fill_viridis() +
+  xlab('Measured expression') + ylab('Predicted expression') +
+  annotate("text", x = 200, y = 0, 
+           label = paste('r =', 
+                         round(cor(ind_site_ind_back_p_r$pred,
+                                   ind_site_ind_back_p_r$ave_med_ratio_norm,
+                                   use = "pairwise.complete.obs", 
+                                   method = "pearson"), 2)))
+
+p_ind_site_ind_back_sum <- ggplot(ind_site_ind_back_sum, 
+                                  aes(site, estimate, fill = type)) + 
+  geom_bar(stat = 'identity', position = 'dodge') + 
+  scale_x_discrete(position = 'bottom') + 
+  scale_fill_viridis(discrete = TRUE) + 
+  theme(axis.ticks.x = element_blank()) +
+  ylab('Weight')
+
+p_ind_site_ind_back_anova <- ind_site_ind_back_anova %>%
+  ggplot(aes(term_fctr, sumsq)) + 
+  geom_bar(stat = 'identity') + 
+  ylab('Sum of squares') +
+  xlab('Model term') + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), 
+        axis.ticks.x = element_blank())
+
+p_ind_sit_ind_back_grid <- plot_grid(p_ind_site_ind_back, 
+                                     p_ind_site_ind_back_sum, 
+                                     p_ind_site_ind_back_anova,
+                                     nrow = 3)
+
+save_plot('plots/p_ind_sit_ind_back_grid.png', p_ind_sit_ind_back_grid,
+          scale = 1.3, base_width = 5, base_height = 8)
+
 
 
 #Sum analysis-------------------------------------------------------------------
+
+#sum unique barcodes and normalized bc reads across barcodes per variant. Output 
+#is barcodes and sum normalized reads per variant. 
 
 var_sum_bc_num <- function(df1) {
   bc_count <- df1 %>%
@@ -637,7 +619,7 @@ var_sum_bc_num <- function(df1) {
     group_by(subpool, name, most_common) %>%
     count(name, wt = norm) %>%
     rename(sum = n)
-  bc_sum <- inner_join(variant_sum, bc_count, 
+  bc_sum <- left_join(variant_sum, bc_count, 
                        by = c("name", "subpool", "most_common")) %>%
     ungroup()
   return(bc_sum)
@@ -651,13 +633,16 @@ variant_counts_RNA_1 <- var_sum_bc_num(bc_join_RNA_1)
 variant_counts_RNA_2 <- var_sum_bc_num(bc_join_RNA_2)
 
 
+#Average DNA variant sum across technical replicates, setting a minimum of 3
+#BC's in both samples. Left_join with RNA that is the same biological replicate 
+#and take ratio of sum in RNA/sum in DNA per variant.
+
 ave_dna_join_rna_var <- function(df1, df2, df3) {
   DNA_join <- inner_join(df1, df2, 
                          by = c("name", "subpool", "most_common"), 
                          suffix = c("_DNA_tr1", "_DNA_tr2")) %>%
     mutate(ave_sum_DNA = (sum_DNA_tr1 + sum_DNA_tr2)/2) %>%
-    filter(barcodes_DNA_tr1 > 7) %>%
-    filter(barcodes_DNA_tr2 > 7)
+    filter(barcodes_DNA_tr1 > 2 & barcodes_DNA_tr2 > 2)
   DNA_RNA_join <- left_join(DNA_join, df3,
                             by = c("name", "subpool", "most_common")) %>%
     rename(sum_RNA = sum) %>%
@@ -671,7 +656,8 @@ ave_dna_join_rna_var <- function(df1, df2, df3) {
                           ratio)) %>%
     mutate(barcodes_RNA = if_else(is.na(barcodes_RNA),
                                   as.integer(0),
-                                  barcodes_RNA))
+                                  barcodes_RNA)) %>%
+    filter(ratio > 0)
   print('processed dfs in order of (DNA tr1, DNA tr2, RNA) in 
         ave_dna_join_rna_var(df1, df2, df3)')
   return(DNA_RNA_join)
@@ -688,144 +674,142 @@ rep_1_2_sum <- inner_join(RNA_DNA_br1, RNA_DNA_br2,
                           by = c('name', 'subpool', 'most_common'),
                           suffix = c('_br1', '_br2'))
 
-rep_1_2_sum_0corr <- function(df1) {
-  df1 <- df1 %>%
-    mutate(ratio_br1 = if_else(
-      ratio_br1 == as.double(0),
-      as.double(0.01), 
-      ratio_br1)) %>%
-    mutate(ratio_br2 = if_else(
-      ratio_br2 == as.double(0),
-      as.double(0.01), 
-      ratio_br2))
-}
+output_int <- rep_1_2_sum %>%
+  write.table(
+    "rep_1_2_sum.txt", 
+    sep = '\t', row.names = FALSE)
 
-rep_1_2_sum_0rm <- function(df1) {
-  df1 <- df1 %>%
-    filter(ratio_br1 != as.double(0)) %>%
-    filter(ratio_br2 != as.double(0))
-}
-
-rep_1_2_sum_log10 <- rep_1_2_sum_0rm(rep_1_2_sum) %>%
-  var_log10()
-
-p_var_sum_ratio <- ggplot(NULL, aes(ratio_br1, ratio_br2)) +
-  geom_point(data = filter(rep_1_2_sum_log10, subpool == 'subpool5'),
-             color = '#482677FF', alpha = 0.2) +
-  geom_point(data = filter(rep_1_2_sum_log10, subpool == 'subpool3'),
-             color = '#2D708EFF', alpha = 0.2) +
-  geom_density2d(data = rep_1_2_sum_log10, 
-                 alpha = 0.7, color = 'black', size = 0.2, bins = 10) +
-  geom_point(data = filter(rep_1_2_sum_log10, 
-                           grepl(
-                             'subpool5_no_site_no_site_no_site_no_site_no_site_no_site',
-                             name)), 
-             color = '#B8DE29FF', alpha = 0.7) + 
-  annotation_logticks(scaled = TRUE) +
-  background_grid(major = 'xy', minor = 'none') + 
-  xlab("log10 variant sum\n RNA/DNA BR 1") +
-  ylab("log10 variant sum\n RNA/DNA BR 2") +
-  scale_x_continuous(breaks = c(-3:1), limits = c(-3, 1.5)) + 
-  scale_y_continuous(breaks = c(-3:1), limits = c(-3, 1.5)) +
-  annotate("text", x = -2, y = 0.5,
-           label = paste('rtot =', 
-                         round(cor(rep_1_2_sum_log10$ratio_br1, 
-                                   rep_1_2_sum_log10$ratio_br2,
-                                   use = "pairwise.complete.obs", 
-                                   method = "pearson"), 2))) +
-  annotate("text", x = -2, y = 0, color = '#482677FF',
-           label = paste('r =', round(
-             cor(
-               filter(rep_1_2_sum_log10, subpool == 'subpool5')$ratio_br1, 
-               filter(rep_1_2_sum_log10, subpool == 'subpool5')$ratio_br2,
-               use = "pairwise.complete.obs", method = "pearson"), 2))) +
-  annotate("text", x = -2, y = -0.5, color = '#2D708EFF',
-           label = paste('r =', round(
-             cor(
-               filter(rep_1_2_sum_log10, subpool == 'subpool3')$ratio_br1, 
-               filter(rep_1_2_sum_log10, subpool == 'subpool3')$ratio_br2,
-               use = "pairwise.complete.obs", method = "pearson"), 2)))
-
-save_plot('plots/p_var_sum_ratio.png', p_var_sum_ratio)
+rep_1_2_sum_log10 <- var_log10(rep_1_2_sum)
 
 
 #Compare sum and med analyses---------------------------------------------------
 
-ave_rep_sum_0rm <- rep_1_2_sum_0rm(rep_1_2_sum) %>%
-  mutate(ave_sum_ratio = (ratio_br1 + ratio_br2)/2) %>%
+med_sum_join <- function(sum, med) {
+  sum_select <- sum %>%
+    select(name, ratio_br1, ratio_br2)
+  med_select <- med %>%
+    select(name, med_ratio_br1, med_ratio_br2)
+  sum_med <- inner_join(sum_select, med_select, by = 'name') %>%
+    select(-name)
+  return(sum_med)
+}
+
+med_vs_sum <- med_sum_join(rep_1_2_sum, rep_1_2) %>%
   var_log10()
 
-ave_rep_med_0rm <- rep_1_2_0rm(rep_1_2) %>%
-  mutate(ave_med_ratio = (med_ratio_br1 + med_ratio_br2)/2) %>%
-  var_log10()
+p_ave_med_vs_sum <- med_vs_sum %>%
+  mutate(ave_sum = (ratio_br1 + ratio_br2)/2) %>%
+  mutate(ave_med = (med_ratio_br1 + med_ratio_br2)/2) %>%
+  ggplot(aes(ave_sum, ave_med)) +
+  geom_point(alpha = 0.2)
 
-rep_sum_med <- inner_join(ave_rep_sum_0rm, ave_rep_med_0rm, 
-                          by = c('subpool', 'name', 'most_common'),
-                          suffix = c('_sum', '_med'))
+my_points <- function(data, mapping, ...) {
+  ggplot(data = data, mapping = mapping) +
+    geom_point(alpha = 0.2) +
+    scale_x_continuous(limits = c(-3, 1.5), breaks = c(-3:1)) + 
+    scale_y_continuous(limits = c(-3, 1.5), breaks = c(-3:1)) +
+    annotation_logticks(sides = 'bl')
+}
 
-p_var_sum_med <- ggplot(NULL, aes(ave_sum_ratio, ave_med_ratio)) +
-  geom_point(data = filter(rep_sum_med, subpool == 'subpool5'),
-             color = '#482677FF', alpha = 0.2) +
-  geom_point(data = filter(rep_sum_med, subpool == 'subpool3'),
-             color = '#2D708EFF', alpha = 0.2) +
-  geom_density2d(data = rep_sum_med, 
-                 alpha = 0.7, color = 'black', size = 0.2, bins = 10) +
-  geom_point(data = filter(rep_sum_med, 
-                           grepl(
-                             'subpool5_no_site_no_site_no_site_no_site_no_site_no_site',
-                             name)), 
-             color = '#B8DE29FF', alpha = 0.7) + 
-  annotation_logticks(scaled = TRUE) +
-  xlab("log10 averagevariant\nsum RNA/DNA ") +
-  ylab("log10 average variant\nmedian RNA/DNA ") +
-  scale_x_continuous(breaks = c(-3:1), limits = c(-3, 1.5)) + 
-  scale_y_continuous(breaks = c(-3:1), limits = c(-3, 1.5))  +
-  background_grid(major = 'xy', minor = 'none') + 
-  annotate("text", x = -2, y = 0.5,
-           label = paste('rtot =', 
-                         round(cor(rep_sum_med$ave_sum_ratio, 
-                                   rep_sum_med$ave_med_ratio,
-                                   use = "pairwise.complete.obs", 
-                                   method = "pearson"), 2))) +
-  annotate("text", x = -2, y = 0, color = '#482677FF',
-           label = paste('r =', round(
-             cor(
-               filter(rep_sum_med, subpool == 'subpool5')$ave_sum_ratio, 
-               filter(rep_sum_med, subpool == 'subpool5')$ave_med_ratio,
-               use = "pairwise.complete.obs", method = "pearson"), 2))) +
-  annotate("text", x = -2, y = -0.5, color = '#2D708EFF',
-           label = paste('r =', round(
-             cor(
-               filter(rep_sum_med, subpool == 'subpool3')$ave_sum_ratio, 
-               filter(rep_sum_med, subpool == 'subpool3')$ave_med_ratio,
-               use = "pairwise.complete.obs", method = "pearson"), 2)))
+my_density <- function(data, mapping, ...) {
+  ggplot(data = data, mapping = mapping) +
+    geom_density(kernel = 'gaussian') +
+    scale_x_continuous(limits = c(-3, 1.5), breaks = c(-3:1)) +
+    scale_y_continuous(limits = c(-0.1, 1)) +
+    annotation_logticks(sides = 'b')
+}
 
-save_plot('plots/p_var_sum_med.png', p_var_sum_med)
+p_med_vs_sum <- ggpairs(med_vs_sum, 
+                        columnLabels = c('Sum Exp.\nRep. 1', 'Sum Exp.\nRep. 2',
+                                         'Med Exp.\nRep. 1', 'Med Exp.\nRep. 2'),
+                        lower = list(continuous = my_points),
+                        diag = list(continuous = my_density)) +
+  panel_border() + 
+  theme(panel.grid.major = element_blank())
 
-p_var_sum_med_madmed1 <- ggplot(NULL, aes(ave_sum_ratio, ave_med_ratio)) +
-  geom_point(data = filter(rep_sum_med, 
-                           mad_over_med_br1 != as.double(0) & subpool != 'control'),
-             color = 'black', alpha = 0.2) + 
-  geom_point(data = filter(rep_sum_med, 
-                           mad_over_med_br2 != as.double(0) & subpool != 'control'),
-             color = 'black', alpha = 0.2) + 
-  geom_point(data = filter(rep_sum_med, 
-                           mad_over_med_br1 == as.double(0) & subpool != 'control'),
-             color = 'red', alpha = 0.2) + 
-  geom_point(data = filter(rep_sum_med, 
-                           mad_over_med_br2 == as.double(0) & subpool != 'control'),
-             color = 'red', alpha = 0.2) + 
-  annotation_logticks(scaled = TRUE) +
-  xlab("log10 averagevariant\nsum RNA/DNA ") +
-  ylab("log10 average variant\nmedian RNA/DNA ") +
-  scale_x_continuous(breaks = c(-3:1), limits = c(-3, 1.5)) + 
-  scale_y_continuous(breaks = c(-3:1), limits = c(-3, 1.5)) +
-  annotate("text", x = -2, y = 0.5,
-           label = paste('rtot =', 
-                         round(cor(rep_sum_med$ave_sum_ratio, 
-                                   rep_sum_med$ave_med_ratio,
-                                   use = "pairwise.complete.obs", 
-                                   method = "pearson"), 2)))
+save_plot('plots/p_med_vs_sum.png', p_med_vs_sum, scale = 1.5)
+
+
+#Do higher DNA BC reads contribute to high sum/median ratios?
+
+#combine sum and median values, take sum/med
+
+sum_over_med_join <- function(sum, med) {
+  sum_select_1 <- sum %>%
+    select(name, ratio_br1)
+  med_select_1 <- med %>%
+    select(name, med_ratio_br1)
+  sum_med_1 <- inner_join(sum_select_1, med_select_1, by = 'name') %>%
+    mutate(sum_over_med = ratio_br1/med_ratio_br1) %>%
+    mutate(replicate = 1) %>%
+    select(name, sum_over_med, replicate)
+  sum_select_2 <- sum %>%
+    select(name, ratio_br2)
+  med_select_2 <- med %>%
+    select(name, med_ratio_br2)
+  sum_med_2 <- inner_join(sum_select_2, med_select_2, by = 'name') %>%
+    mutate(sum_over_med = ratio_br2/med_ratio_br2) %>%
+    mutate(replicate = 2) %>%
+    select(name, sum_over_med, replicate)
+  sum_med_rep <- rbind(sum_med_1, sum_med_2)
+  return(sum_med_rep)
+}
+
+sum_over_med <- sum_over_med_join(rep_1_2_sum, rep_1_2)
+
+#Combine sum/med with average DNA BC reads
+
+DNA_norm_join_som <- function(df1, df2, df3) {
+  DNA1 <- df1 %>%
+    select(barcode, name, ave_norm_DNA) %>%
+    mutate(replicate = 1)
+  DNA2 <- df2 %>%
+    select(barcode, name, ave_norm_DNA) %>%
+    mutate(replicate = 2)
+  DNA_rep <- rbind(DNA1, DNA2)
+  DNA_join_som <- left_join(df3, DNA_rep, by = c('name', 'replicate'))
+  return(DNA_join_som)
+}
+
+DNA_sum_over_med <- DNA_norm_join_som(bc_ave_DNA_RNA_1, bc_ave_DNA_RNA_2,
+                                      sum_over_med)
+
+p_DNA_sum_over_med <- ggplot(DNA_sum_over_med, aes(sum_over_med, ave_norm_DNA)) +
+  facet_grid(~ replicate) +
+  geom_point(alpha = 0.2) +
+  theme(strip.background = element_rect(colour="black", fill="white")) +
+  panel_border() + 
+  xlab('Variant sum/med') +
+  ylab('Average normalized DNA BC reads')
+
+save_plot('plots/DNA_sum_over_med.png', p_DNA_sum_over_med, scale = 1.3)
+
+
+#Combine sum/med with BC # per variant
+
+BC_join_som <- function(df1, df2, df3) {
+  BC1 <- df1 %>%
+    select(name, barcodes_DNA) %>%
+    mutate(replicate = 1)
+  BC2 <- df2 %>%
+    select(name, barcodes_DNA) %>%
+    mutate(replicate = 2)
+  BC_rep <- rbind(BC1, BC2)
+  BC_join_som <- left_join(df3, BC_rep, by = c('name', 'replicate'))
+  return(BC_join_som)
+}
+
+BC_sum_over_med <- BC_join_som(med_ratio_1, med_ratio_2, sum_over_med)
+
+p_BC_sum_over_med <- ggplot(BC_sum_over_med, aes(sum_over_med, barcodes_DNA)) +
+  facet_grid(~ replicate) +
+  geom_point(alpha = 0.2) +
+  theme(strip.background = element_rect(colour="black", fill="white")) +
+  panel_border() + 
+  xlab('Variant sum/med') +
+  ylab('DNA Barcodes')
+
+save_plot('plots/BC_sum_over_med.png', p_BC_sum_over_med, scale = 1.3)
 
 
 #Finding variants for extra analyses--------------------------------------------
