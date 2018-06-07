@@ -160,6 +160,8 @@ rep_1_2 <- inner_join(med_ratio_1, med_ratio_2,
              suffix = c('_br1', '_br2')) %>%
   rep_1_2_0rm()
 
+sum(is.na(rep_1_2$med_ratio_br2))
+
 back_norm <- function(df1) {
   gsub_1_2 <- df1 %>%
     ungroup () %>%
@@ -183,6 +185,13 @@ back_norm <- function(df1) {
 }
 
 int_back_norm_rep_1_2 <- back_norm(rep_1_2)
+
+int_back_norm_pc_spGl4 <- rep_1_2 %>%
+  filter(name == 'pGL4.29 Promega 1-63 + 1-87' | name == 'pGL4.29 Promega 1-87') %>%
+  mutate(name = str_c(name, '_scramble pGL4.29 Promega 1-63 + 1-87')) %>%
+  mutate(subpool = 'subpool3') %>%
+  rbind(rep_1_2) %>%
+  back_norm()
 
 
 #determine the log(RNA/DNA) for each sample log2 is useful for replicate plots for expression 
@@ -208,6 +217,8 @@ var_log10 <- function(df) {
 rep_1_2_log10 <- var_log10(rep_1_2)
 
 int_back_norm_rep_1_2_log10 <- var_log10(int_back_norm_rep_1_2)
+
+int_back_norm_pc_spGl4_log10 <- var_log10(int_back_norm_pc_spGl4)
 
 #Separate into subpools----------------------------------------------------------------------
 
@@ -298,27 +309,46 @@ output_int_controls <- controls %>%
 
 #replicates
 
-p_var_med_ratio <- ggplot(rep_1_2_log10, aes(med_ratio_br1, med_ratio_br2)) +
-  geom_point(alpha = 0.2) +
-  geom_point(data = filter(rep_1_2_log10, 
+p_var_med_rep <- rep_1_2 %>%
+  ggplot(aes(med_ratio_br1, med_ratio_br2)) +
+  geom_point(alpha = 0.1, size = 1) +
+  geom_point(data = filter(rep_1_2, 
                            grepl(
                              'subpool5_no_site_no_site_no_site_no_site_no_site_no_site',
                              name)), 
-             color = 'red', alpha = 0.7) + 
+             fill = 'orange', shape = 21, size = 1.75) + 
+  geom_point(data = filter(rep_1_2, name == 'pGL4.29 Promega 1-63 + 1-87'), 
+             fill = 'red', shape = 21, size = 1.75) +
+  geom_abline(slope = 1, color = 'grey60') +
   annotation_logticks(scaled = TRUE) +
-  xlab("log10 variant median\n RNA/DNA BR 1") +
-  ylab("log10 variant median\n RNA/DNA BR 2") +
-  scale_x_continuous(breaks = c(-3:1), limits = c(-3, 1.5)) + 
-  scale_y_continuous(breaks = c(-3:1), limits = c(-3, 1.5))  +
+  xlab("Expression (a.u.) replicate 1") +
+  ylab("Expression (a.u.) replicate 2") +
+  scale_x_log10(limits = c(0.001, 15)) + 
+  scale_y_log10(limits = c(0.001, 15)) +
   background_grid(major = 'xy', minor = 'none') + 
-  annotate("text", x = -2, y = 0.5,
-           label = paste('r =', 
-                         round(cor(rep_1_2_log10$med_ratio_br1, 
-                                   rep_1_2_log10$med_ratio_br2,
-                                   use = "pairwise.complete.obs", 
-                                   method = "pearson"), 2))) 
+  theme(strip.background = element_rect(colour="black", fill="white"),
+        axis.line.y = element_line(), panel.spacing.x=unit(1, "lines")) 
 
-save_plot('plots/p_var_med_ratio.png', p_var_med_ratio)
+save_plot('plots/p_var_med_rep_line_sp5.pdf', p_var_med_rep, scale = 1.3,
+          base_width = 2.5, base_height = 2.35)
+
+pearsons_sample <- tibble(
+  sample = c('all', 'subpool3', 'subpool5'),
+  pearsons = c(round(cor(rep_1_2_log10$med_ratio_br1, 
+                         rep_1_2_log10$med_ratio_br2, 
+                         use = "pairwise.complete.obs", method = "pearson"), 3),
+               round(cor(filter(rep_1_2_log10, 
+                                subpool == 'subpool3')$med_ratio_br1,
+                         filter(rep_1_2_log10, 
+                                subpool == 'subpool3')$med_ratio_br2,
+                         use = "pairwise.complete.obs", method = "pearson"), 3),
+               round(cor(filter(rep_1_2_log10, 
+                                subpool == 'subpool5')$med_ratio_br1,
+                         filter(rep_1_2_log10, 
+                                subpool == 'subpool5')$med_ratio_br2,
+                         use = "pairwise.complete.obs", method = "pearson"), 3)))
+
+write_csv(pearsons_sample, 'pearsons_sample.csv')
 
 
 #Mad over median analysis
@@ -437,19 +467,21 @@ save_plot('plots/p_subpool5_cons_mix_sitenum.png', p_subpool5_cons_mix_sitenum,
 #BC num reads + #BC's
 
 p_BC_num_reads_viol_full <- ggplot(NULL) +
-  geom_violin(data = bc_ave_DNA_RNA_1, 
-              aes(x = 'DNA BR1 TR1', y = num_reads_DNA_tr1)) +
-  geom_violin(data = bc_ave_DNA_RNA_1, 
-              aes(x = 'DNA BR1 TR2', y = num_reads_DNA_tr2)) +
-  geom_violin(data = bc_ave_DNA_RNA_1, 
-              aes(x = 'RNA BR1', y = num_reads_RNA)) +
-  geom_violin(data = bc_ave_DNA_RNA_2, 
-              aes(x = 'DNA BR2 TR1', y = num_reads_DNA_tr1)) +
-  geom_violin(data = bc_ave_DNA_RNA_2, 
-              aes(x = 'DNA BR2 TR2', y = num_reads_DNA_tr2)) +
-  geom_violin(data = bc_ave_DNA_RNA_2, 
-              aes(x = 'RNA BR2', y = num_reads_RNA)) +
+  geom_jitter(data = bc_ave_DNA_RNA_1, 
+              aes(x = 'DNA BR1 TR1', y = num_reads_DNA_tr1), size = 0.5, alpha = 0.1) +
+  geom_jitter(data = bc_ave_DNA_RNA_1, 
+              aes(x = 'DNA BR1 TR2', y = num_reads_DNA_tr2), size = 0.5, alpha = 0.1) +
+  geom_jitter(data = bc_ave_DNA_RNA_1, 
+              aes(x = 'RNA BR1', y = num_reads_RNA), size = 0.5, alpha = 0.1) +
+  geom_jitter(data = bc_ave_DNA_RNA_2, 
+              aes(x = 'DNA BR2 TR1', y = num_reads_DNA_tr1), size = 0.5, alpha = 0.1) +
+  geom_jitter(data = bc_ave_DNA_RNA_2, 
+              aes(x = 'DNA BR2 TR2', y = num_reads_DNA_tr2), size = 0.5, alpha = 0.1) +
+  geom_jitter(data = bc_ave_DNA_RNA_2, 
+              aes(x = 'RNA BR2', y = num_reads_RNA), size = 0.5, alpha = 0.1) +
   xlab("") +
+  scale_y_log10() +
+  annotation_logticks(sides = 'l') +
   ylab("Reads per BC")
   
 save_plot('plots/BC_num_reads_viol_full.png', p_BC_num_reads_viol_full, 
@@ -647,6 +679,7 @@ ave_dna_join_rna_var <- function(df1, df2, df3) {
                             by = c("name", "subpool", "most_common")) %>%
     rename(sum_RNA = sum) %>%
     rename(barcodes_RNA = barcodes) %>%
+    filter(barcodes_RNA > 2) %>%
     mutate(ratio = sum_RNA/ave_sum_DNA) %>%
     mutate(sum_RNA = if_else(is.na(sum_RNA),
                              0,
@@ -680,6 +713,47 @@ output_int <- rep_1_2_sum %>%
     sep = '\t', row.names = FALSE)
 
 rep_1_2_sum_log10 <- var_log10(rep_1_2_sum)
+
+
+#Sum replicability
+
+p_var_sum_rep <- rep_1_2_sum %>%
+  ggplot(aes(ratio_br1, ratio_br2)) +
+  geom_point(alpha = 0.1, size = 1) +
+  geom_abline(slope = 1, color = 'grey60') +
+  geom_point(data = filter(rep_1_2_sum, 
+                           grepl(
+                             'subpool5_no_site_no_site_no_site_no_site_no_site_no_site',
+                             name)), 
+             fill = 'orange', shape = 21, size = 1.75) + 
+  geom_point(data = filter(rep_1_2_sum, 
+                           name == 'pGL4.29 Promega 1-63 + 1-87'), 
+             fill = 'red', shape = 21, size = 1.75) +
+  annotation_logticks(scaled = TRUE) +
+  xlab("Expression (a.u.) replicate 1") +
+  ylab("Expression (a.u.) replicate 2") +
+  scale_x_log10(limits = c(0.004, 20)) + 
+  scale_y_log10(limits = c(0.004, 20)) +
+  background_grid(major = 'xy', minor = 'none') + 
+  theme(strip.background = element_rect(colour="black", fill="white"),
+        axis.line.y = element_line(), panel.spacing.x=unit(1, "lines")) 
+
+save_plot('plots/p_var_sum_rep_line.pdf', p_var_sum_rep, scale = 1.3,
+          base_width = 2.5, base_height = 2.35)
+
+pearsons_sample <- tibble(
+  sample = c('all', 'subpool3', 'subpool5'),
+  pearsons = c(round(cor(rep_1_2_sum_log10$ratio_br1, 
+                         rep_1_2_sum_log10$ratio_br2, 
+                         use = "pairwise.complete.obs", method = "pearson"), 3),
+               round(cor(filter(rep_1_2_sum_log10, subpool == 'subpool3')$ratio_br1,
+                         filter(rep_1_2_sum_log10, subpool == 'subpool3')$ratio_br2,
+                         use = "pairwise.complete.obs", method = "pearson"), 3),
+               round(cor(filter(rep_1_2_sum_log10, subpool == 'subpool5')$ratio_br1,
+                         filter(rep_1_2_sum_log10, subpool == 'subpool5')$ratio_br2,
+                         use = "pairwise.complete.obs", method = "pearson"), 3)))
+
+write_csv(pearsons_sample, 'pearsons_sample.csv')
 
 
 #Compare sum and med analyses---------------------------------------------------
