@@ -49,7 +49,7 @@ SP3_SP5_map <- barcode_map %>%
 #Join reads to bcmap------------------------------------------------------------
 
 #Join BC reads to BC mapping, keeping the reads only appearing in barcode 
-#mapping andreplacing na with 0 reads.
+#mapping and replacing na with 0 reads.
 
 bc_map_join_bc <- function(df1, df2) {
   df2 <- df2 %>%
@@ -72,7 +72,7 @@ bc_join_RNA_1 <- bc_map_join_bc(SP3_SP5_map, bc_RNA_1)
 bc_join_RNA_2 <- bc_map_join_bc(SP3_SP5_map, bc_RNA_2)
 
 
-#Join DNA and RNA BC------------------------------------------------------------
+#Med analysis-------------------------------------------------------------------
 
 #Join DNA BC reads > 6, take average norm. reads and join to RNA. Take ratio of 
 #RNA/DNA norm reads
@@ -101,27 +101,31 @@ bc_ave_DNA_RNA_2 <- ave_dna_join_rna_rep(bc_join_DNA_2_1, bc_join_DNA_2_2,
                                          bc_join_RNA_2)
 
 
-#Barcodes per variant and median RNA/DNA----------------------------------------
+#Count barcodes per variant per DNA and RNA, set minimum of 8 BC's per variant 
+#in both samples, take median RNA/DNA per variant, then per variant determine 
+#the median absolute deviation of all barcode ratios. Then filter out variants 
+#with 0 median expression
 
-#Count barcodes per variant per DNA and RNA, set minimum of 3 BC's per variant 
-#in DNA sample, take median RNA/DNA per variant, find absolute deviation for
-#each BC per variant then per variant determine the median absolute deviation.
-
-ratio_bc_med_var <- function(df1) {
-  bc_count_DNA <- df1 %>%
+ratio_bc_med_var <- function(df) {
+  bc_count_DNA <- df %>%
     group_by(subpool, name, most_common) %>%
     summarize(barcodes_DNA = n()) %>%
-    filter(barcodes_DNA > 2)
-  bc_count_RNA <- df1 %>%
+    filter(barcodes_DNA > 7)
+  bc_count_RNA <- df %>%
     group_by(subpool, name, most_common) %>%
     filter(num_reads_RNA != 0) %>%
-    summarize(barcodes_RNA = n())
-  bc_DNA_RNA <- left_join(bc_count_DNA, bc_count_RNA, 
-                           by = c('subpool', 'name', 'most_common'))
-  med_ratio <- df1 %>%
+    summarize(barcodes_RNA = n()) %>%
+    filter(barcodes_RNA > 7)
+  bc_DNA_RNA <- inner_join(bc_count_DNA, bc_count_RNA, 
+                           by = c('subpool', 'name', 'most_common')) %>%
+    ungroup()
+  bc_min_8_df <- left_join(bc_DNA_RNA, df, 
+                           by = c('subpool', 'name', 'most_common')) %>%
+    ungroup()
+  med_ratio <- bc_min_8_df %>%
     group_by(subpool, name, most_common) %>%
     summarize(med_ratio = median(ratio))
-  mad_ratio <- df1 %>%
+  mad_ratio <- bc_min_8_df %>%
     group_by(subpool, name, most_common) %>%
     summarize(mad = mad(ratio))
   med_mad <- inner_join(med_ratio, mad_ratio, 
@@ -133,7 +137,8 @@ ratio_bc_med_var <- function(df1) {
       mad_over_med))
   bc_med <- inner_join(med_mad, bc_DNA_RNA, 
                        by = c('subpool', 'name', 'most_common')) %>%
-    ungroup()
+    ungroup() %>%
+    filter(med_ratio > 0)
   return(bc_med)
 }
 
@@ -141,26 +146,70 @@ med_ratio_1 <- ratio_bc_med_var(bc_ave_DNA_RNA_1)
 med_ratio_2 <- ratio_bc_med_var(bc_ave_DNA_RNA_2)
 
 
-#combine biological replicates, normalize to background---------------------------------------
+#combine biological replicates
+
+rep_1_2 <- inner_join(med_ratio_1, med_ratio_2,
+             by = c("name", "subpool", "most_common"),
+             suffix = c('_br1', '_br2'))
+
+output_int <- rep_1_2 %>%
+  write.table(
+    "rep_1_2.txt", 
+    sep = '\t', row.names = FALSE)
+
+#plot replicability, output table and correlation
+
+rep_1_2_log10 <- var_log10(rep_1_2)
+
+p_var_med_rep <- rep_1_2 %>%
+  ggplot(aes(med_ratio_br1, med_ratio_br2)) +
+  geom_point(alpha = 0.1, size = 0.75) +
+  geom_point(data = filter(rep_1_2, 
+                           grepl(
+                             'subpool5_no_site_no_site_no_site_no_site_no_site_no_site',
+                             name)), 
+             fill = 'orange', shape = 21, size = 1.5) + 
+  geom_point(data = filter(rep_1_2, 
+                           name == 'pGL4.29 Promega 1-63 + 1-87'), 
+             fill = 'red', shape = 21, size = 1.5) +
+  annotation_logticks(scaled = TRUE) +
+  xlab("Expression (a.u.) replicate 1") +
+  ylab("Expression (a.u.) replicate 2") +
+  scale_x_log10(limits = c(0.001, 20), breaks = c(0.01, 0.1, 1, 10)) + 
+  scale_y_log10(limits = c(0.001, 20), breaks = c(0.01, 0.1, 1, 10)) +
+  theme(strip.background = element_rect(colour="black", fill="white"),
+        axis.line.y = element_line(), panel.spacing.x=unit(1, "lines")) 
+
+save_plot('plots/p_var_med_rep.pdf', p_var_med_rep, scale = 1.3,
+          base_width = 2.7, base_height = 2.35)
+
+pearsons_med <- tibble(
+  sample = c('all', 'subpool3', 'subpool5'),
+  pearsons = c(round(cor(rep_1_2_log10$med_ratio_br1, 
+                         rep_1_2_log10$med_ratio_br2, 
+                         use = "pairwise.complete.obs", 
+                         method = "pearson"), 3),
+               round(cor(filter(rep_1_2_log10, 
+                                subpool == 'subpool3')$med_ratio_br1,
+                         filter(rep_1_2_log10, 
+                                subpool == 'subpool3')$med_ratio_br2,
+                         use = "pairwise.complete.obs", 
+                         method = "pearson"), 3),
+               round(cor(filter(rep_1_2_log10, 
+                                subpool == 'subpool5')$med_ratio_br1,
+                         filter(rep_1_2_log10, 
+                                subpool == 'subpool5')$med_ratio_br2,
+                         use = "pairwise.complete.obs", 
+                         method = "pearson"), 3)))
+
+write_csv(pearsons_med, 'pearsons_med.csv')
+
 
 #After combining, rename backgrounds to simplified names, make background column 
 #(excluding controls), separate out background values in each dataset and left 
 #join to original dataset. Normalize expression of each variant to its 
 #background in that biological replicate. Determine average normalized 
 #expression across biological replicates.
-
-rep_1_2_0rm <- function(df1) {
-  df1 <- df1 %>%
-    filter(med_ratio_br1 != as.double(0)) %>%
-    filter(med_ratio_br2 != as.double(0))
-}
-
-rep_1_2 <- inner_join(med_ratio_1, med_ratio_2,
-             by = c("name", "subpool", "most_common"),
-             suffix = c('_br1', '_br2')) %>%
-  rep_1_2_0rm()
-
-sum(is.na(rep_1_2$med_ratio_br2))
 
 back_norm <- function(df1) {
   gsub_1_2 <- df1 %>%
@@ -194,9 +243,7 @@ int_back_norm_pc_spGl4 <- rep_1_2 %>%
   back_norm()
 
 
-#determine the log(RNA/DNA) for each sample log2 is useful for replicate plots for expression 
-#and log10 is useful for barcode read analysis. This is useful for replicate plots, but 
-#further manipulations should use rep_1_2
+#determine the log(RNA/DNA) for each sample
 
 var_log2 <- function(df) {
   log_ratio_df <- df %>% 
@@ -219,6 +266,128 @@ rep_1_2_log10 <- var_log10(rep_1_2)
 int_back_norm_rep_1_2_log10 <- var_log10(int_back_norm_rep_1_2)
 
 int_back_norm_pc_spGl4_log10 <- var_log10(int_back_norm_pc_spGl4)
+
+
+#Sum analysis-------------------------------------------------------------------
+
+#sum unique barcodes and normalized bc reads across barcodes per variant. Set-up
+#a minimum of 8 barcodes per sample to reliably sum. 
+
+var_sum_bc_num <- function(df1) {
+  bc_count <- df1 %>%
+    filter(df1$num_reads > 0) %>%
+    group_by(subpool, name, most_common) %>%
+    summarise(barcodes = n()) %>%
+    filter(barcodes > 7)
+  variant_sum <- df1 %>%
+    group_by(subpool, name, most_common) %>%
+    count(name, wt = norm) %>%
+    rename(sum = n)
+  bc_sum <- right_join(variant_sum, bc_count, 
+                       by = c("name", "subpool", "most_common")) %>%
+    ungroup()
+  return(bc_sum)
+}
+
+variant_counts_DNA_1_1 <- var_sum_bc_num(bc_join_DNA_1_1)
+variant_counts_DNA_1_2 <- var_sum_bc_num(bc_join_DNA_1_2)
+variant_counts_DNA_2_1 <- var_sum_bc_num(bc_join_DNA_2_1)
+variant_counts_DNA_2_2 <- var_sum_bc_num(bc_join_DNA_2_2)
+variant_counts_RNA_1 <- var_sum_bc_num(bc_join_RNA_1)
+variant_counts_RNA_2 <- var_sum_bc_num(bc_join_RNA_2)
+
+
+#Average DNA variant sum across technical replicates. Left_join with RNA that is
+#the same biological replicate and determine variant expression as = sum nrpm 
+#RNA/sum nrpm DNA. Filter out expression = 0
+
+ave_dna_join_rna_var <- function(df1, df2, df3) {
+  DNA_join <- inner_join(df1, df2, 
+                         by = c("name", "subpool", "most_common"), 
+                         suffix = c("_DNA_tr1", "_DNA_tr2")) %>%
+    mutate(ave_sum_DNA = (sum_DNA_tr1 + sum_DNA_tr2)/2)
+  DNA_RNA_join <- left_join(DNA_join, df3,
+                            by = c("name", "subpool", "most_common")) %>%
+    rename(sum_RNA = sum) %>% 
+    rename(barcodes_RNA = barcodes) %>%
+    filter(sum_RNA > 0) %>%
+    mutate(ratio = sum_RNA/ave_sum_DNA)
+  print('processed dfs in order of (DNA tr1, DNA tr2, RNA) in 
+        ave_dna_join_rna_var(df1, df2, df3)')
+  return(DNA_RNA_join)
+}
+
+RNA_DNA_br1 <- ave_dna_join_rna_var(variant_counts_DNA_1_1, 
+                                    variant_counts_DNA_1_2, 
+                                    variant_counts_RNA_1)
+RNA_DNA_br2 <- ave_dna_join_rna_var(variant_counts_DNA_2_1, 
+                                    variant_counts_DNA_2_2, 
+                                    variant_counts_RNA_2)
+
+rep_1_2_sum <- inner_join(RNA_DNA_br1, RNA_DNA_br2, 
+                          by = c('name', 'subpool', 'most_common'),
+                          suffix = c('_br1', '_br2'))
+
+
+#Write output table
+
+output_int <- rep_1_2_sum %>%
+  write.table(
+    "rep_1_2_sum.txt", 
+    sep = '\t', row.names = FALSE)
+
+
+#Determine log expression
+
+rep_1_2_sum_log10 <- var_log10(rep_1_2_sum)
+
+
+#Sum replicability
+
+p_var_sum_rep <- rep_1_2_sum %>%
+  ggplot(aes(ratio_br1, ratio_br2)) +
+  geom_point(alpha = 0.1, size = 0.75) +
+  geom_point(data = filter(rep_1_2_sum, 
+                           grepl(
+                             'subpool5_no_site_no_site_no_site_no_site_no_site_no_site',
+                             name)), 
+             fill = 'orange', shape = 21, size = 1.5) + 
+  geom_point(data = filter(rep_1_2_sum, 
+                           name == 'pGL4.29 Promega 1-63 + 1-87'), 
+             fill = 'red', shape = 21, size = 1.5) +
+  annotation_logticks(scaled = TRUE) +
+  xlab("Expression (a.u.) replicate 1") +
+  ylab("Expression (a.u.) replicate 2") +
+  scale_x_log10(limits = c(0.004, 20)) + 
+  scale_y_log10(limits = c(0.004, 20)) +
+  background_grid(major = 'xy', minor = 'none') + 
+  theme(strip.background = element_rect(colour="black", fill="white"),
+        axis.line.y = element_line(), panel.spacing.x=unit(1, "lines")) 
+
+save_plot('plots/p_var_sum_rep.pdf', p_var_sum_rep, scale = 1.3,
+          base_width = 2.5, base_height = 2.35)
+
+pearsons_sample <- tibble(
+  sample = c('all', 'subpool3', 'subpool5'),
+  pearsons = c(round(cor(rep_1_2_sum_log10$ratio_br1, 
+                         rep_1_2_sum_log10$ratio_br2, 
+                         use = "pairwise.complete.obs", 
+                         method = "pearson"), 3),
+               round(cor(filter(rep_1_2_sum_log10, 
+                                subpool == 'subpool3')$ratio_br1,
+                         filter(rep_1_2_sum_log10, 
+                                subpool == 'subpool3')$ratio_br2,
+                         use = "pairwise.complete.obs", 
+                         method = "pearson"), 3),
+               round(cor(filter(rep_1_2_sum_log10, 
+                                subpool == 'subpool5')$ratio_br1,
+                         filter(rep_1_2_sum_log10, 
+                                subpool == 'subpool5')$ratio_br2,
+                         use = "pairwise.complete.obs", 
+                         method = "pearson"), 3)))
+
+write_csv(pearsons_sample, 'pearsons_sample.csv')
+
 
 #Separate into subpools----------------------------------------------------------------------
 
@@ -634,126 +803,6 @@ p_ind_sit_ind_back_grid <- plot_grid(p_ind_site_ind_back,
 
 save_plot('plots/p_ind_sit_ind_back_grid.png', p_ind_sit_ind_back_grid,
           scale = 1.3, base_width = 5, base_height = 8)
-
-
-
-#Sum analysis-------------------------------------------------------------------
-
-#sum unique barcodes and normalized bc reads across barcodes per variant. Output 
-#is barcodes and sum normalized reads per variant. 
-
-var_sum_bc_num <- function(df1) {
-  bc_count <- df1 %>%
-    filter(df1$num_reads > 0) %>%
-    group_by(subpool, name, most_common) %>%
-    summarise(barcodes = n())
-  variant_sum <- df1 %>%
-    group_by(subpool, name, most_common) %>%
-    count(name, wt = norm) %>%
-    rename(sum = n)
-  bc_sum <- left_join(variant_sum, bc_count, 
-                       by = c("name", "subpool", "most_common")) %>%
-    ungroup()
-  return(bc_sum)
-}
-
-variant_counts_DNA_1_1 <- var_sum_bc_num(bc_join_DNA_1_1)
-variant_counts_DNA_1_2 <- var_sum_bc_num(bc_join_DNA_1_2)
-variant_counts_DNA_2_1 <- var_sum_bc_num(bc_join_DNA_2_1)
-variant_counts_DNA_2_2 <- var_sum_bc_num(bc_join_DNA_2_2)
-variant_counts_RNA_1 <- var_sum_bc_num(bc_join_RNA_1)
-variant_counts_RNA_2 <- var_sum_bc_num(bc_join_RNA_2)
-
-
-#Average DNA variant sum across technical replicates, setting a minimum of 3
-#BC's in both samples. Left_join with RNA that is the same biological replicate 
-#and take ratio of sum in RNA/sum in DNA per variant.
-
-ave_dna_join_rna_var <- function(df1, df2, df3) {
-  DNA_join <- inner_join(df1, df2, 
-                         by = c("name", "subpool", "most_common"), 
-                         suffix = c("_DNA_tr1", "_DNA_tr2")) %>%
-    mutate(ave_sum_DNA = (sum_DNA_tr1 + sum_DNA_tr2)/2) %>%
-    filter(barcodes_DNA_tr1 > 2 & barcodes_DNA_tr2 > 2)
-  DNA_RNA_join <- left_join(DNA_join, df3,
-                            by = c("name", "subpool", "most_common")) %>%
-    rename(sum_RNA = sum) %>%
-    rename(barcodes_RNA = barcodes) %>%
-    filter(barcodes_RNA > 2) %>%
-    mutate(ratio = sum_RNA/ave_sum_DNA) %>%
-    mutate(sum_RNA = if_else(is.na(sum_RNA),
-                             0,
-                             sum_RNA)) %>%
-    mutate(ratio = if_else(is.na(ratio), 
-                          0, 
-                          ratio)) %>%
-    mutate(barcodes_RNA = if_else(is.na(barcodes_RNA),
-                                  as.integer(0),
-                                  barcodes_RNA)) %>%
-    filter(ratio > 0)
-  print('processed dfs in order of (DNA tr1, DNA tr2, RNA) in 
-        ave_dna_join_rna_var(df1, df2, df3)')
-  return(DNA_RNA_join)
-}
-
-RNA_DNA_br1 <- ave_dna_join_rna_var(variant_counts_DNA_1_1, 
-                                    variant_counts_DNA_1_2, 
-                                    variant_counts_RNA_1)
-RNA_DNA_br2 <- ave_dna_join_rna_var(variant_counts_DNA_2_1, 
-                                    variant_counts_DNA_2_2, 
-                                    variant_counts_RNA_2)
-
-rep_1_2_sum <- inner_join(RNA_DNA_br1, RNA_DNA_br2, 
-                          by = c('name', 'subpool', 'most_common'),
-                          suffix = c('_br1', '_br2'))
-
-output_int <- rep_1_2_sum %>%
-  write.table(
-    "rep_1_2_sum.txt", 
-    sep = '\t', row.names = FALSE)
-
-rep_1_2_sum_log10 <- var_log10(rep_1_2_sum)
-
-
-#Sum replicability
-
-p_var_sum_rep <- rep_1_2_sum %>%
-  ggplot(aes(ratio_br1, ratio_br2)) +
-  geom_point(alpha = 0.1, size = 1) +
-  geom_abline(slope = 1, color = 'grey60') +
-  geom_point(data = filter(rep_1_2_sum, 
-                           grepl(
-                             'subpool5_no_site_no_site_no_site_no_site_no_site_no_site',
-                             name)), 
-             fill = 'orange', shape = 21, size = 1.75) + 
-  geom_point(data = filter(rep_1_2_sum, 
-                           name == 'pGL4.29 Promega 1-63 + 1-87'), 
-             fill = 'red', shape = 21, size = 1.75) +
-  annotation_logticks(scaled = TRUE) +
-  xlab("Expression (a.u.) replicate 1") +
-  ylab("Expression (a.u.) replicate 2") +
-  scale_x_log10(limits = c(0.004, 20)) + 
-  scale_y_log10(limits = c(0.004, 20)) +
-  background_grid(major = 'xy', minor = 'none') + 
-  theme(strip.background = element_rect(colour="black", fill="white"),
-        axis.line.y = element_line(), panel.spacing.x=unit(1, "lines")) 
-
-save_plot('plots/p_var_sum_rep_line.pdf', p_var_sum_rep, scale = 1.3,
-          base_width = 2.5, base_height = 2.35)
-
-pearsons_sample <- tibble(
-  sample = c('all', 'subpool3', 'subpool5'),
-  pearsons = c(round(cor(rep_1_2_sum_log10$ratio_br1, 
-                         rep_1_2_sum_log10$ratio_br2, 
-                         use = "pairwise.complete.obs", method = "pearson"), 3),
-               round(cor(filter(rep_1_2_sum_log10, subpool == 'subpool3')$ratio_br1,
-                         filter(rep_1_2_sum_log10, subpool == 'subpool3')$ratio_br2,
-                         use = "pairwise.complete.obs", method = "pearson"), 3),
-               round(cor(filter(rep_1_2_sum_log10, subpool == 'subpool5')$ratio_br1,
-                         filter(rep_1_2_sum_log10, subpool == 'subpool5')$ratio_br2,
-                         use = "pairwise.complete.obs", method = "pearson"), 3)))
-
-write_csv(pearsons_sample, 'pearsons_sample.csv')
 
 
 #Compare sum and med analyses---------------------------------------------------
