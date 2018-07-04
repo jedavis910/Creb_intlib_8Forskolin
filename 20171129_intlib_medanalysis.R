@@ -159,29 +159,29 @@ output_int <- rep_1_2 %>%
 
 #plot replicability, output table and correlation
 
-rep_1_2_log10 <- var_log10(rep_1_2)
-
-p_var_med_rep <- rep_1_2 %>%
+p_fig1_int_rep <- rep_1_2 %>%
   ggplot(aes(med_ratio_br1, med_ratio_br2)) +
   geom_point(alpha = 0.1, size = 0.75) +
   geom_point(data = filter(rep_1_2, 
                            grepl(
                              'subpool5_no_site_no_site_no_site_no_site_no_site_no_site',
                              name)), 
-             fill = 'orange', shape = 21, size = 1.5) + 
+             fill = 'orange', shape = 21, size = 1.75) + 
   geom_point(data = filter(rep_1_2, 
                            name == 'pGL4.29 Promega 1-63 + 1-87'), 
-             fill = 'red', shape = 21, size = 1.5) +
+             fill = 'red', shape = 21, size = 1.75) +
   annotation_logticks(scaled = TRUE) +
   xlab("Expression (a.u.) replicate 1") +
   ylab("Expression (a.u.) replicate 2") +
   scale_x_log10(limits = c(0.001, 20), breaks = c(0.01, 0.1, 1, 10)) + 
   scale_y_log10(limits = c(0.001, 20), breaks = c(0.01, 0.1, 1, 10)) +
   theme(strip.background = element_rect(colour="black", fill="white"),
-        axis.line.y = element_line(), panel.spacing.x=unit(1, "lines")) 
+        axis.line.y = element_line(), panel.spacing.x=unit(1, "lines"))
 
-save_plot('plots/p_var_med_rep.pdf', p_var_med_rep, scale = 1.3,
+save_plot('plots/p_fig1_int_rep.pdf', p_fig1_int_rep, scale = 1.3,
           base_width = 2.7, base_height = 2.35)
+
+rep_1_2_log10 <- var_log10(rep_1_2)
 
 pearsons_med <- tibble(
   sample = c('all', 'subpool3', 'subpool5'),
@@ -488,7 +488,6 @@ p_var_med_rep <- rep_1_2 %>%
              fill = 'orange', shape = 21, size = 1.75) + 
   geom_point(data = filter(rep_1_2, name == 'pGL4.29 Promega 1-63 + 1-87'), 
              fill = 'red', shape = 21, size = 1.75) +
-  geom_abline(slope = 1, color = 'grey60') +
   annotation_logticks(scaled = TRUE) +
   xlab("Expression (a.u.) replicate 1") +
   ylab("Expression (a.u.) replicate 2") +
@@ -498,7 +497,7 @@ p_var_med_rep <- rep_1_2 %>%
   theme(strip.background = element_rect(colour="black", fill="white"),
         axis.line.y = element_line(), panel.spacing.x=unit(1, "lines")) 
 
-save_plot('plots/p_var_med_rep_line_sp5.pdf', p_var_med_rep, scale = 1.3,
+save_plot('plots/p_var_med_rep.pdf', p_var_med_rep, scale = 1.3,
           base_width = 2.5, base_height = 2.35)
 
 pearsons_sample <- tibble(
@@ -828,7 +827,7 @@ p_ave_med_vs_sum <- med_vs_sum %>%
 
 my_points <- function(data, mapping, ...) {
   ggplot(data = data, mapping = mapping) +
-    geom_point(alpha = 0.2) +
+    geom_point(alpha = 0.2, size = 0.75) +
     scale_x_continuous(limits = c(-3, 1.5), breaks = c(-3:1)) + 
     scale_y_continuous(limits = c(-3, 1.5), breaks = c(-3:1)) +
     annotation_logticks(sides = 'bl')
@@ -850,7 +849,7 @@ p_med_vs_sum <- ggpairs(med_vs_sum,
   panel_border() + 
   theme(panel.grid.major = element_blank())
 
-save_plot('plots/p_med_vs_sum.png', p_med_vs_sum, scale = 1.5)
+save_plot('plots/p_med_vs_sum.pdf', p_med_vs_sum, scale = 1.5)
 
 
 #Do higher DNA BC reads contribute to high sum/median ratios?
