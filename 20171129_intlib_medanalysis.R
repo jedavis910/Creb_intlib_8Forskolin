@@ -102,7 +102,7 @@ bc_ave_DNA_RNA_2 <- ave_dna_join_rna_rep(bc_join_DNA_2_1, bc_join_DNA_2_2,
 
 
 #Count barcodes per variant per DNA and RNA, set minimum of 8 BC's per variant 
-#in both samples, take median RNA/DNA per variant, then per variant determine 
+#in DNA, take median RNA/DNA per variant, then per variant determine 
 #the median absolute deviation of all barcode ratios. Then filter out variants 
 #with 0 median expression
 
@@ -114,8 +114,7 @@ ratio_bc_med_var <- function(df) {
   bc_count_RNA <- df %>%
     group_by(subpool, name, most_common) %>%
     filter(num_reads_RNA != 0) %>%
-    summarize(barcodes_RNA = n()) %>%
-    filter(barcodes_RNA > 7)
+    summarize(barcodes_RNA = n())
   bc_DNA_RNA <- inner_join(bc_count_DNA, bc_count_RNA, 
                            by = c('subpool', 'name', 'most_common')) %>%
     ungroup()
@@ -166,10 +165,10 @@ p_fig1_int_rep <- rep_1_2 %>%
                            grepl(
                              'subpool5_no_site_no_site_no_site_no_site_no_site_no_site',
                              name)), 
-             fill = 'orange', shape = 21, size = 1.75) + 
+             fill = 'orange', shape = 21, size = 2.25) + 
   geom_point(data = filter(rep_1_2, 
                            name == 'pGL4.29 Promega 1-63 + 1-87'), 
-             fill = 'red', shape = 21, size = 1.75) +
+             fill = 'red', shape = 21, size = 2.25) +
   annotation_logticks(scaled = TRUE) +
   xlab("Expression (a.u.) replicate 1") +
   ylab("Expression (a.u.) replicate 2") +
@@ -178,8 +177,26 @@ p_fig1_int_rep <- rep_1_2 %>%
   theme(strip.background = element_rect(colour="black", fill="white"),
         axis.line.y = element_line(), panel.spacing.x=unit(1, "lines"))
 
-save_plot('plots/p_fig1_int_rep.pdf', p_fig1_int_rep, scale = 1.3,
-          base_width = 2.7, base_height = 2.35)
+ggsave('plots/p_fig1_int_rep.pdf', p_fig1_int_rep, scale = 1.3,
+       width = 2.1, height = 1.8, units = 'in')
+
+#determine the log(RNA/DNA) for each sample
+
+var_log2 <- function(df) {
+  log_ratio_df <- df %>% 
+    mutate_if(is.double, 
+              funs(log2(.))
+    )
+  return(log_ratio_df)
+}
+
+var_log10 <- function(df) {
+  log_ratio_df <- df %>% 
+    mutate_if(is.double, 
+              funs(log10(.))
+    )
+  return(log_ratio_df)
+}
 
 rep_1_2_log10 <- var_log10(rep_1_2)
 
@@ -243,42 +260,16 @@ int_back_norm_pc_spGl4 <- rep_1_2 %>%
   back_norm()
 
 
-#determine the log(RNA/DNA) for each sample
-
-var_log2 <- function(df) {
-  log_ratio_df <- df %>% 
-    mutate_if(is.double, 
-              funs(log2(.))
-    )
-  return(log_ratio_df)
-}
-
-var_log10 <- function(df) {
-  log_ratio_df <- df %>% 
-    mutate_if(is.double, 
-              funs(log10(.))
-    )
-  return(log_ratio_df)
-}
-
-rep_1_2_log10 <- var_log10(rep_1_2)
-
-int_back_norm_rep_1_2_log10 <- var_log10(int_back_norm_rep_1_2)
-
-int_back_norm_pc_spGl4_log10 <- var_log10(int_back_norm_pc_spGl4)
-
-
 #Sum analysis-------------------------------------------------------------------
 
 #sum unique barcodes and normalized bc reads across barcodes per variant. Set-up
-#a minimum of 8 barcodes per sample to reliably sum. 
+#a minimum of 8 barcodes per DNA to reliably sum. 
 
 var_sum_bc_num <- function(df1) {
   bc_count <- df1 %>%
     filter(df1$num_reads > 0) %>%
     group_by(subpool, name, most_common) %>%
-    summarise(barcodes = n()) %>%
-    filter(barcodes > 7)
+    summarise(barcodes = n())
   variant_sum <- df1 %>%
     group_by(subpool, name, most_common) %>%
     count(name, wt = norm) %>%
@@ -289,10 +280,14 @@ var_sum_bc_num <- function(df1) {
   return(bc_sum)
 }
 
-variant_counts_DNA_1_1 <- var_sum_bc_num(bc_join_DNA_1_1)
-variant_counts_DNA_1_2 <- var_sum_bc_num(bc_join_DNA_1_2)
-variant_counts_DNA_2_1 <- var_sum_bc_num(bc_join_DNA_2_1)
-variant_counts_DNA_2_2 <- var_sum_bc_num(bc_join_DNA_2_2)
+variant_counts_DNA_1_1 <- var_sum_bc_num(bc_join_DNA_1_1) %>%
+  filter(barcodes > 7)
+variant_counts_DNA_1_2 <- var_sum_bc_num(bc_join_DNA_1_2) %>%
+  filter(barcodes > 7)
+variant_counts_DNA_2_1 <- var_sum_bc_num(bc_join_DNA_2_1) %>%
+  filter(barcodes > 7)
+variant_counts_DNA_2_2 <- var_sum_bc_num(bc_join_DNA_2_2) %>%
+  filter(barcodes > 7)
 variant_counts_RNA_1 <- var_sum_bc_num(bc_join_RNA_1)
 variant_counts_RNA_2 <- var_sum_bc_num(bc_join_RNA_2)
 
@@ -850,88 +845,6 @@ p_med_vs_sum <- ggpairs(med_vs_sum,
   theme(panel.grid.major = element_blank())
 
 save_plot('plots/p_med_vs_sum.pdf', p_med_vs_sum, scale = 1.5)
-
-
-#Do higher DNA BC reads contribute to high sum/median ratios?
-
-#combine sum and median values, take sum/med
-
-sum_over_med_join <- function(sum, med) {
-  sum_select_1 <- sum %>%
-    select(name, ratio_br1)
-  med_select_1 <- med %>%
-    select(name, med_ratio_br1)
-  sum_med_1 <- inner_join(sum_select_1, med_select_1, by = 'name') %>%
-    mutate(sum_over_med = ratio_br1/med_ratio_br1) %>%
-    mutate(replicate = 1) %>%
-    select(name, sum_over_med, replicate)
-  sum_select_2 <- sum %>%
-    select(name, ratio_br2)
-  med_select_2 <- med %>%
-    select(name, med_ratio_br2)
-  sum_med_2 <- inner_join(sum_select_2, med_select_2, by = 'name') %>%
-    mutate(sum_over_med = ratio_br2/med_ratio_br2) %>%
-    mutate(replicate = 2) %>%
-    select(name, sum_over_med, replicate)
-  sum_med_rep <- rbind(sum_med_1, sum_med_2)
-  return(sum_med_rep)
-}
-
-sum_over_med <- sum_over_med_join(rep_1_2_sum, rep_1_2)
-
-#Combine sum/med with average DNA BC reads
-
-DNA_norm_join_som <- function(df1, df2, df3) {
-  DNA1 <- df1 %>%
-    select(barcode, name, ave_norm_DNA) %>%
-    mutate(replicate = 1)
-  DNA2 <- df2 %>%
-    select(barcode, name, ave_norm_DNA) %>%
-    mutate(replicate = 2)
-  DNA_rep <- rbind(DNA1, DNA2)
-  DNA_join_som <- left_join(df3, DNA_rep, by = c('name', 'replicate'))
-  return(DNA_join_som)
-}
-
-DNA_sum_over_med <- DNA_norm_join_som(bc_ave_DNA_RNA_1, bc_ave_DNA_RNA_2,
-                                      sum_over_med)
-
-p_DNA_sum_over_med <- ggplot(DNA_sum_over_med, aes(sum_over_med, ave_norm_DNA)) +
-  facet_grid(~ replicate) +
-  geom_point(alpha = 0.2) +
-  theme(strip.background = element_rect(colour="black", fill="white")) +
-  panel_border() + 
-  xlab('Variant sum/med') +
-  ylab('Average normalized DNA BC reads')
-
-save_plot('plots/DNA_sum_over_med.png', p_DNA_sum_over_med, scale = 1.3)
-
-
-#Combine sum/med with BC # per variant
-
-BC_join_som <- function(df1, df2, df3) {
-  BC1 <- df1 %>%
-    select(name, barcodes_DNA) %>%
-    mutate(replicate = 1)
-  BC2 <- df2 %>%
-    select(name, barcodes_DNA) %>%
-    mutate(replicate = 2)
-  BC_rep <- rbind(BC1, BC2)
-  BC_join_som <- left_join(df3, BC_rep, by = c('name', 'replicate'))
-  return(BC_join_som)
-}
-
-BC_sum_over_med <- BC_join_som(med_ratio_1, med_ratio_2, sum_over_med)
-
-p_BC_sum_over_med <- ggplot(BC_sum_over_med, aes(sum_over_med, barcodes_DNA)) +
-  facet_grid(~ replicate) +
-  geom_point(alpha = 0.2) +
-  theme(strip.background = element_rect(colour="black", fill="white")) +
-  panel_border() + 
-  xlab('Variant sum/med') +
-  ylab('DNA Barcodes')
-
-save_plot('plots/BC_sum_over_med.png', p_BC_sum_over_med, scale = 1.3)
 
 
 #Finding variants for extra analyses--------------------------------------------
