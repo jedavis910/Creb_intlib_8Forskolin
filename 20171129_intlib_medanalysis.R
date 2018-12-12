@@ -115,7 +115,7 @@ ratio_bc_med_var <- function(df) {
     group_by(subpool, name, most_common) %>%
     filter(num_reads_RNA != 0) %>%
     summarize(barcodes_RNA = n())
-  bc_DNA_RNA <- inner_join(bc_count_DNA, bc_count_RNA, 
+  bc_DNA_RNA <- left_join(bc_count_DNA, bc_count_RNA, 
                            by = c('subpool', 'name', 'most_common')) %>%
     ungroup()
   bc_min_8_df <- left_join(bc_DNA_RNA, df, 
@@ -274,7 +274,7 @@ var_sum_bc_num <- function(df1) {
     group_by(subpool, name, most_common) %>%
     count(name, wt = norm) %>%
     rename(sum = n)
-  bc_sum <- right_join(variant_sum, bc_count, 
+  bc_sum <- left_join(variant_sum, bc_count, 
                        by = c("name", "subpool", "most_common")) %>%
     ungroup()
   return(bc_sum)
@@ -305,7 +305,6 @@ ave_dna_join_rna_var <- function(df1, df2, df3) {
                             by = c("name", "subpool", "most_common")) %>%
     rename(sum_RNA = sum) %>% 
     rename(barcodes_RNA = barcodes) %>%
-    filter(sum_RNA > 0) %>%
     mutate(ratio = sum_RNA/ave_sum_DNA)
   print('processed dfs in order of (DNA tr1, DNA tr2, RNA) in 
         ave_dna_join_rna_var(df1, df2, df3)')
@@ -395,7 +394,7 @@ write_csv(pearsons_sample, 'pearsons_sample.csv')
 #sites. Also took average of log2 med BC expression between biological replicates for plotting
 
 subpool3 <- 
-  filter(int_back_norm_rep_1_2_log10, subpool == "subpool3") %>%
+  filter(int_back_norm_rep_1_2, subpool == "subpool3") %>%
   ungroup () %>%
   select(-subpool) %>%
   mutate(name = gsub('2BS ', '', name), 
@@ -448,6 +447,10 @@ subpool5 <-
   mutate(site_type = 
            ifelse(consensus == 0 & weak > 0, 
                   'weak', site_combo))
+
+test <- subpool5 %>%
+  group_by(background) %>%
+  summarize(number = n())
 
 controls <- 
   filter(rep_1_2, subpool == "control") %>%
